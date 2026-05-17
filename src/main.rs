@@ -16,7 +16,7 @@ fn main() -> iced::Result {
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     let grab_rx = Arc::new(Mutex::new(Some(rx)));
 
-    grab::run_grab_thread(tx);
+    grab::run_grab_thread(tx, &config);
 
     let grab_rx_clone = grab_rx.clone();
     iced::daemon("QuickAccent", app::App::update, app::App::view)

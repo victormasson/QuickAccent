@@ -175,6 +175,7 @@ fn grab_subscription() -> impl iced::futures::Stream<Item = Message> {
                     GrabEvent::UpdateSelection(index) => Message::UpdateSelection(index),
                     GrabEvent::HideOverlay => Message::HideOverlay,
                     GrabEvent::InjectChar(ch) => Message::InjectChar(ch),
+                    GrabEvent::FalseStart => Message::HideOverlay,
                 };
                 output.send(msg).await.ok();
             }

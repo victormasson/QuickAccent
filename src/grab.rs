@@ -1,8 +1,9 @@
 use std::cell::RefCell;
 use tokio::sync::mpsc::UnboundedSender;
 
+use crate::config::{ActivationKey, Config};
 use crate::injection;
-use crate::state_machine::{AccentState, GrabEvent, KeyInput};
+use crate::state_machine::{GrabEvent, KeyInput, StateMachine};
 
 #[cfg(target_os = "macos")]
 mod platform {
@@ -37,6 +38,7 @@ mod platform {
         fn CGEventTapEnable(tap: CFMachPortRef, enable: bool);
         fn CGEventGetIntegerValueField(event: CGEventRef, field: u32) -> i64;
         fn CGEventGetFlags(event: CGEventRef) -> u64;
+        fn CGEventSourceKeyState(stateID: i32, key: u16) -> bool;
     }
 
     #[link(name = "CoreFoundation", kind = "framework")]
@@ -48,8 +50,9 @@ mod platform {
         ) -> CFRunLoopSourceRef;
     }
 
+    use crate::mappings::MappingKey;
+
     fn keycode_to_input(code: i64) -> KeyInput {
-        use crate::mappings::MappingKey;
         match code {
             0 => KeyInput::Letter(MappingKey::A),
             1 => KeyInput::Letter(MappingKey::S),
@@ -79,12 +82,55 @@ mod platform {
             46 => KeyInput::Letter(MappingKey::M),
             49 => KeyInput::Space,
             53 => KeyInput::Escape,
+            123 => KeyInput::LeftArrow,
+            124 => KeyInput::RightArrow,
             _ => KeyInput::Other,
         }
     }
 
+    /// Inverse mapping: MappingKey → macOS keycode (for physical key verification)
+    fn mapping_key_to_keycode(mk: MappingKey) -> u16 {
+        match mk {
+            MappingKey::A => 0,
+            MappingKey::S => 1,
+            MappingKey::D => 2,
+            MappingKey::F => 3,
+            MappingKey::H => 4,
+            MappingKey::G => 5,
+            MappingKey::Z => 6,
+            MappingKey::X => 7,
+            MappingKey::C => 8,
+            MappingKey::V => 9,
+            MappingKey::B => 11,
+            MappingKey::Q => 12,
+            MappingKey::W => 13,
+            MappingKey::E => 14,
+            MappingKey::R => 15,
+            MappingKey::Y => 16,
+            MappingKey::T => 17,
+            MappingKey::O => 31,
+            MappingKey::U => 32,
+            MappingKey::I => 34,
+            MappingKey::P => 35,
+            MappingKey::L => 37,
+            MappingKey::J => 38,
+            MappingKey::K => 40,
+            MappingKey::N => 45,
+            MappingKey::M => 46,
+        }
+    }
+
+    fn is_key_physically_held(keycode: u16) -> bool {
+        // kCGEventSourceStateCombinedSessionState = 0
+        unsafe { CGEventSourceKeyState(0, keycode) }
+    }
+
+    fn is_trigger_input(input: KeyInput) -> bool {
+        matches!(input, KeyInput::Space | KeyInput::LeftArrow | KeyInput::RightArrow)
+    }
+
     struct TapContext {
-        state: RefCell<AccentState>,
+        state: RefCell<StateMachine>,
         shift_held: RefCell<bool>,
         tx: UnboundedSender<GrabEvent>,
     }
@@ -100,13 +146,35 @@ mod platform {
         match event_type {
             K_CG_EVENT_FLAGS_CHANGED => {
                 let flags = unsafe { CGEventGetFlags(event) };
-                *ctx.shift_held.borrow_mut() = (flags & K_CG_EVENT_FLAG_SHIFT) != 0;
+                let new_shift = (flags & K_CG_EVENT_FLAG_SHIFT) != 0;
+                *ctx.shift_held.borrow_mut() = new_shift;
+                // Notify state machine of shift change during selection
+                if let Some(ge) = ctx.state.borrow_mut().update_shift(new_shift) {
+                    ctx.tx.send(ge).ok();
+                }
                 event
             }
             K_CG_EVENT_KEY_DOWN => {
                 let keycode_raw =
                     unsafe { CGEventGetIntegerValueField(event, K_CG_KEYBOARD_EVENT_KEYCODE) };
                 let input = keycode_to_input(keycode_raw);
+
+                // Physical key verification: if in LetterHeld and a trigger arrives,
+                // verify the letter is still physically held
+                if is_trigger_input(input) {
+                    if let Some(held_mk) = ctx.state.borrow().held_key() {
+                        let held_keycode = mapping_key_to_keycode(held_mk);
+                        if !is_key_physically_held(held_keycode) {
+                            eprintln!(
+                                "[QuickAccent] Physical key check failed for {:?}, resetting",
+                                held_mk
+                            );
+                            ctx.state.borrow_mut().force_reset();
+                            return event; // pass through
+                        }
+                    }
+                }
+
                 let (suppress, grab_event) = ctx
                     .state
                     .borrow_mut()
@@ -131,8 +199,10 @@ mod platform {
                         "[QuickAccent] KeyUp {} -> {:?}, suppress: {}",
                         keycode_raw, ge, suppress
                     );
-                    if let GrabEvent::InjectChar(ch) = ge {
-                        injection::inject_char(*ch);
+                    match ge {
+                        GrabEvent::InjectChar(ch) => injection::inject_char(*ch),
+                        GrabEvent::FalseStart => injection::inject_space(),
+                        _ => {}
                     }
                     ctx.tx.send(ge.clone()).ok();
                 }
@@ -142,9 +212,9 @@ mod platform {
         }
     }
 
-    pub fn run_grab(tx: UnboundedSender<GrabEvent>) {
+    pub fn run_grab(tx: UnboundedSender<GrabEvent>, input_time_ms: u64, activation_key: ActivationKey) {
         let ctx = Box::new(TapContext {
-            state: RefCell::new(AccentState::new()),
+            state: RefCell::new(StateMachine::new(input_time_ms, activation_key)),
             shift_held: RefCell::new(false),
             tx,
         });
@@ -222,22 +292,30 @@ mod platform {
             Key::KeyZ => KeyInput::Letter(MappingKey::Z),
             Key::Space => KeyInput::Space,
             Key::Escape => KeyInput::Escape,
+            Key::LeftArrow => KeyInput::LeftArrow,
+            Key::RightArrow => KeyInput::RightArrow,
             _ => KeyInput::Other,
         }
     }
 
-    pub fn run_grab(tx: UnboundedSender<GrabEvent>) {
-        let state = RefCell::new(AccentState::new());
+    pub fn run_grab(tx: UnboundedSender<GrabEvent>, input_time_ms: u64, activation_key: ActivationKey) {
+        let state = RefCell::new(StateMachine::new(input_time_ms, activation_key));
         let shift_held = RefCell::new(false);
 
         let callback = move |event: Event| -> Option<Event> {
             match event.event_type {
                 EventType::KeyPress(Key::ShiftLeft | Key::ShiftRight) => {
                     *shift_held.borrow_mut() = true;
+                    if let Some(ge) = state.borrow_mut().update_shift(true) {
+                        tx.send(ge).ok();
+                    }
                     Some(event)
                 }
                 EventType::KeyRelease(Key::ShiftLeft | Key::ShiftRight) => {
                     *shift_held.borrow_mut() = false;
+                    if let Some(ge) = state.borrow_mut().update_shift(false) {
+                        tx.send(ge).ok();
+                    }
                     Some(event)
                 }
                 EventType::KeyPress(key) => {
@@ -247,8 +325,10 @@ mod platform {
                             .borrow_mut()
                             .handle_key_press(input, *shift_held.borrow());
                     if let Some(ref ge) = grab_event {
-                        if let GrabEvent::InjectChar(ch) = ge {
-                            injection::inject_char(*ch);
+                        match ge {
+                            GrabEvent::InjectChar(ch) => injection::inject_char(*ch),
+                            GrabEvent::FalseStart => injection::inject_space(),
+                            _ => {}
                         }
                         tx.send(ge.clone()).ok();
                     }
@@ -259,8 +339,10 @@ mod platform {
                     let (suppress, grab_event) =
                         state.borrow_mut().handle_key_release(input);
                     if let Some(ref ge) = grab_event {
-                        if let GrabEvent::InjectChar(ch) = ge {
-                            injection::inject_char(*ch);
+                        match ge {
+                            GrabEvent::InjectChar(ch) => injection::inject_char(*ch),
+                            GrabEvent::FalseStart => injection::inject_space(),
+                            _ => {}
                         }
                         tx.send(ge.clone()).ok();
                     }
@@ -277,10 +359,12 @@ mod platform {
     }
 }
 
-pub fn run_grab_thread(tx: UnboundedSender<GrabEvent>) {
+pub fn run_grab_thread(tx: UnboundedSender<GrabEvent>, config: &Config) {
+    let input_time_ms = config.input_time_ms;
+    let activation_key = config.activation_key_parsed();
     std::thread::spawn(move || {
         eprintln!("[QuickAccent] Starting keyboard grab...");
         eprintln!("[QuickAccent] Make sure Accessibility permissions are granted.");
-        platform::run_grab(tx);
+        platform::run_grab(tx, input_time_ms, activation_key);
     });
 }
