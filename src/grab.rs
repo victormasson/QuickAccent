@@ -212,9 +212,9 @@ mod platform {
         }
     }
 
-    pub fn run_grab(tx: UnboundedSender<GrabEvent>, input_time_ms: u64, activation_key: ActivationKey) {
+    pub fn run_grab(tx: UnboundedSender<GrabEvent>, input_time_ms: u64, hold_delay_ms: u64, activation_key: ActivationKey) {
         let ctx = Box::new(TapContext {
-            state: RefCell::new(StateMachine::new(input_time_ms, activation_key)),
+            state: RefCell::new(StateMachine::new(input_time_ms, hold_delay_ms, activation_key)),
             shift_held: RefCell::new(false),
             tx,
         });
@@ -298,8 +298,8 @@ mod platform {
         }
     }
 
-    pub fn run_grab(tx: UnboundedSender<GrabEvent>, input_time_ms: u64, activation_key: ActivationKey) {
-        let state = RefCell::new(StateMachine::new(input_time_ms, activation_key));
+    pub fn run_grab(tx: UnboundedSender<GrabEvent>, input_time_ms: u64, hold_delay_ms: u64, activation_key: ActivationKey) {
+        let state = RefCell::new(StateMachine::new(input_time_ms, hold_delay_ms, activation_key));
         let shift_held = RefCell::new(false);
 
         let callback = move |event: Event| -> Option<Event> {
@@ -361,10 +361,11 @@ mod platform {
 
 pub fn run_grab_thread(tx: UnboundedSender<GrabEvent>, config: &Config) {
     let input_time_ms = config.input_time_ms;
+    let hold_delay_ms = config.hold_delay_ms;
     let activation_key = config.activation_key_parsed();
     std::thread::spawn(move || {
         eprintln!("[QuickAccent] Starting keyboard grab...");
         eprintln!("[QuickAccent] Make sure Accessibility permissions are granted.");
-        platform::run_grab(tx, input_time_ms, activation_key);
+        platform::run_grab(tx, input_time_ms, hold_delay_ms, activation_key);
     });
 }

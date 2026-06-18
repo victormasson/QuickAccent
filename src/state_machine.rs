@@ -51,14 +51,16 @@ pub enum GrabEvent {
 pub struct StateMachine {
     pub state: AccentState,
     pub input_time: Duration,
+    pub hold_delay: Duration,
     pub activation_key: ActivationKey,
 }
 
 impl StateMachine {
-    pub fn new(input_time_ms: u64, activation_key: ActivationKey) -> Self {
+    pub fn new(input_time_ms: u64, hold_delay_ms: u64, activation_key: ActivationKey) -> Self {
         StateMachine {
             state: AccentState::Idle,
             input_time: Duration::from_millis(input_time_ms),
+            hold_delay: Duration::from_millis(hold_delay_ms),
             activation_key,
         }
     }
@@ -112,17 +114,21 @@ impl StateMachine {
             }
             AccentState::LetterHeld { key, variants, held_since } => {
                 if self.is_trigger(input) {
-                    // Activate accent selection immediately
-                    let variants = variants.clone();
-                    let held_key = *key;
-                    let held_since = *held_since;
-                    self.state = AccentState::Selecting {
-                        key: held_key,
-                        variants: variants.clone(),
-                        selected_index: 0,
-                        held_since,
-                    };
-                    (true, Some(GrabEvent::ShowOverlay { variants, index: 0 }))
+                    if held_since.elapsed() < self.hold_delay {
+                        self.state = AccentState::Idle;
+                        (false, None)
+                    } else {
+                        let variants = variants.clone();
+                        let held_key = *key;
+                        let held_since = *held_since;
+                        self.state = AccentState::Selecting {
+                            key: held_key,
+                            variants: variants.clone(),
+                            selected_index: 0,
+                            held_since,
+                        };
+                        (true, Some(GrabEvent::ShowOverlay { variants, index: 0 }))
+                    }
                 } else if input == KeyInput::Letter(*key) {
                     // Same key repeat → ignore
                     (false, None)
