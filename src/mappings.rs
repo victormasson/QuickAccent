@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::OnceLock;
+use std::sync::RwLock;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MappingKey {
@@ -9,15 +9,21 @@ pub enum MappingKey {
 
 type LangData = &'static [(MappingKey, &'static [char])];
 
-static COMPILED_MAP: OnceLock<HashMap<MappingKey, Vec<char>>> = OnceLock::new();
+static COMPILED_MAP: RwLock<Option<HashMap<MappingKey, Vec<char>>>> = RwLock::new(None);
 
 pub fn init(languages: &[String]) {
     let map = build_map(languages);
-    COMPILED_MAP.set(map).ok();
+    *COMPILED_MAP.write().unwrap() = Some(map);
+}
+
+pub fn reload(languages: &[String]) {
+    let map = build_map(languages);
+    *COMPILED_MAP.write().unwrap() = Some(map);
 }
 
 pub fn get_variants(key: MappingKey, uppercase: bool) -> Vec<char> {
-    let map = COMPILED_MAP.get().expect("mappings not initialized");
+    let guard = COMPILED_MAP.read().unwrap();
+    let map = guard.as_ref().expect("mappings not initialized");
     match map.get(&key) {
         Some(chars) if !chars.is_empty() => {
             if uppercase {
@@ -172,20 +178,20 @@ fn get_language_data(name: &str) -> Option<LangData> {
             (MappingKey::Y, &['ÿ', 'ý']),
         ]),
         "IPA" => Some(&[
-            (MappingKey::A, &['ɐ', 'ɑ', 'ɑ̃', 'ɒ', 'æ']),
+            (MappingKey::A, &['ɐ', 'ɑ', 'ɒ', 'æ']),
             (MappingKey::B, &['β', 'ɓ', 'ʙ']),
             (MappingKey::C, &['ç']),
             (MappingKey::D, &['ð', 'ɖ', 'ɗ']),
-            (MappingKey::E, &['ə', 'ɚ', 'ɘ', 'ɵ', 'ɛ', 'ɛ̃', 'ɜ', 'ɝ', 'ɞ']),
+            (MappingKey::E, &['ə', 'ɚ', 'ɘ', 'ɵ', 'ɛ', 'ɜ', 'ɝ', 'ɞ']),
             (MappingKey::F, &['ɸ', '͡', '͜']),
             (MappingKey::G, &['ɡ', 'ɠ', 'ɣ', 'ɢ', 'ʛ']),
             (MappingKey::H, &['ɦ', 'ɥ', 'ʜ', 'ħ', 'ɧ', 'ʰ']),
-            (MappingKey::I, &['ɨ', 'ɪ', 'ɪ̈']),
+            (MappingKey::I, &['ɨ', 'ɪ']),
             (MappingKey::J, &['ʝ', 'ɟ', 'ʄ', 'ʲ']),
             (MappingKey::L, &['ɬ', 'ɫ', 'ɮ', 'ꞎ', 'ɭ', 'ʎ', 'ʟ', 'ɺ']),
             (MappingKey::M, &['ɱ']),
             (MappingKey::N, &['ɳ', 'ɲ', 'ŋ', 'ɴ']),
-            (MappingKey::O, &['ɤ', 'ɔ', 'ɔ̃', 'ø', 'œ', 'ɶ']),
+            (MappingKey::O, &['ɤ', 'ɔ', 'ø', 'œ', 'ɶ']),
             (MappingKey::Q, &['ʔ', 'ʕ', 'ʡ', 'ʢ']),
             (MappingKey::R, &['ʁ', 'ɹ', 'ɻ', 'ɾ', 'ɽ', 'ʀ']),
             (MappingKey::S, &['ʃ', 'ʂ', 'ɕ']),
@@ -193,7 +199,7 @@ fn get_language_data(name: &str) -> Option<LangData> {
             (MappingKey::U, &['ʉ', 'ʊ']),
             (MappingKey::V, &['ʋ', 'ⱱ', 'ʌ']),
             (MappingKey::W, &['ɰ', 'ɯ', 'ʍ', 'ʷ']),
-            (MappingKey::X, &['χ', 'ˈ', 'ˌ', 'ː̆̚']),
+            (MappingKey::X, &['χ', 'ˈ', 'ˌ', 'ː']),
             (MappingKey::Y, &['ʏ']),
             (MappingKey::Z, &['ʒ', 'ʐ', 'ʑ']),
         ]),

@@ -8,7 +8,7 @@ pub enum ActivationKey {
     Both,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct Config {
     #[serde(default = "default_languages")]
     pub languages: Vec<String>,
@@ -105,4 +105,11 @@ languages = ["French"]
             config
         }
     }
+}
+
+pub fn read_config() -> Option<Config> {
+    let path = config_path();
+    std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|contents| toml::from_str::<Config>(&contents).ok())
 }
