@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::OnceLock;
+use std::sync::RwLock;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MappingKey {
@@ -9,15 +9,21 @@ pub enum MappingKey {
 
 type LangData = &'static [(MappingKey, &'static [char])];
 
-static COMPILED_MAP: OnceLock<HashMap<MappingKey, Vec<char>>> = OnceLock::new();
+static COMPILED_MAP: RwLock<Option<HashMap<MappingKey, Vec<char>>>> = RwLock::new(None);
 
 pub fn init(languages: &[String]) {
     let map = build_map(languages);
-    COMPILED_MAP.set(map).ok();
+    *COMPILED_MAP.write().unwrap() = Some(map);
+}
+
+pub fn reload(languages: &[String]) {
+    let map = build_map(languages);
+    *COMPILED_MAP.write().unwrap() = Some(map);
 }
 
 pub fn get_variants(key: MappingKey, uppercase: bool) -> Vec<char> {
-    let map = COMPILED_MAP.get().expect("mappings not initialized");
+    let guard = COMPILED_MAP.read().unwrap();
+    let map = guard.as_ref().expect("mappings not initialized");
     match map.get(&key) {
         Some(chars) if !chars.is_empty() => {
             if uppercase {

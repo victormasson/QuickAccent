@@ -47,6 +47,8 @@ On first run, a default config file is created at: `~/.config/quickaccent/config
 languages = ["French", "German", "Spanish"]
 ```
 
+Changes to the config file are applied automatically without restarting QuickAccent.
+
 ### Available Languages
 
 Catalan, CrimeanTatar, Croatian, Czech, Danish, Dutch, Esperanto, Estonian, Finnish, French, German, Greek, Hungarian, IPA, Iceland, Irish, Italian, Kurdish, Lithuanian, Maltese, Maori, Norwegian, Pinyin, Polish, Portuguese, ProtoIndoEuropean, Romanian, Romanization, ScottishGaelic, Serbian, Slovak, Slovenian, Spanish, Swedish, Turkish, Vietnamese, Welsh
