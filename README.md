@@ -45,6 +45,11 @@ On first run, a default config file is created at: `~/.config/quickaccent/config
 # Select which languages to include for accent variants.
 # Variants from all selected languages are merged together.
 languages = ["French", "German", "Spanish"]
+
+# Minimum hold time (ms) before Space shows the accent banner.
+# Fast taps below this are treated as normal typing (no banner).
+# Default: 250 (PowerToys uses 200)
+# hold_delay_ms = 250
 ```
 
 ### Available Languages

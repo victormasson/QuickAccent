@@ -14,6 +14,8 @@ pub struct Config {
     pub languages: Vec<String>,
     #[serde(default = "default_input_time_ms")]
     pub input_time_ms: u64,
+    #[serde(default = "default_hold_delay_ms")]
+    pub hold_delay_ms: u64,
     #[serde(default = "default_activation_key")]
     pub activation_key: String,
 }
@@ -24,6 +26,10 @@ fn default_languages() -> Vec<String> {
 
 fn default_input_time_ms() -> u64 {
     200
+}
+
+fn default_hold_delay_ms() -> u64 {
+    250
 }
 
 fn default_activation_key() -> String {
@@ -45,6 +51,7 @@ impl Default for Config {
         Config {
             languages: default_languages(),
             input_time_ms: default_input_time_ms(),
+            hold_delay_ms: default_hold_delay_ms(),
             activation_key: default_activation_key(),
         }
     }
@@ -65,8 +72,8 @@ pub fn load_config() -> Config {
     match std::fs::read_to_string(&path) {
         Ok(contents) => match toml::from_str::<Config>(&contents) {
             Ok(config) => {
-                eprintln!("[QuickAccent] Loaded config: languages = {:?}, input_time_ms = {}, activation_key = {}",
-                    config.languages, config.input_time_ms, config.activation_key);
+                eprintln!("[QuickAccent] Loaded config: languages = {:?}, input_time_ms = {}, hold_delay_ms = {}, activation_key = {}",
+                    config.languages, config.input_time_ms, config.hold_delay_ms, config.activation_key);
                 config
             }
             Err(e) => {
@@ -96,6 +103,11 @@ languages = ["French"]
 # If released sooner, it's treated as a false start and the trigger key
 # (space/arrow) is replayed. Default: 200
 # input_time_ms = 200
+
+# Minimum hold time (ms) before a trigger (Space) will show the accent banner.
+# Quick taps below this are treated as normal typing. Default: 250
+# (PowerToys uses 200)
+# hold_delay_ms = 250
 
 # Which key(s) trigger the accent overlay: "Space", "LeftRightArrow", or "Both"
 # Default: "Both"
