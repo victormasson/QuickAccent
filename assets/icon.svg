@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   width="256"
+   height="256"
+   viewBox="0 0 256 256"
+   version="1.1"
+   id="svg3"
+   sodipodi:docname="icon15.svg"
+   inkscape:version="1.4.2 (ebf0e940, 2025-05-08)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <sodipodi:namedview
+     id="namedview3"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:zoom="2.3318913"
+     inkscape:cx="153.30903"
+     inkscape:cy="132.29605"
+     inkscape:window-width="1800"
+     inkscape:window-height="1102"
+     inkscape:window-x="1"
+     inkscape:window-y="39"
+     inkscape:window-maximized="0"
+     inkscape:current-layer="svg3" />
+  <defs
+     id="defs2">
+    <linearGradient
+       id="cubeGrad"
+       x1="0%"
+       y1="0%"
+       x2="100%"
+       y2="100%">
+      <stop
+         offset="0%"
+         stop-color="#4a0a35"
+         id="stop1" />
+      <stop
+         offset="100%"
+         stop-color="#370028"
+         id="stop2" />
+    </linearGradient>
+  </defs>
+  <path
+     d="M48 64 Q48 40 72 40 L184 40 Q208 40 208 64 L208 192 Q208 216 184 216 L72 216 Q48 216 48 192 Z"
+     fill="#370028"
+     id="path2" />
+  <text
+     x="138.75011"
+     y="162.28662"
+     font-family="Georgia, 'Times New Roman', serif"
+     font-size="142px"
+     font-weight="400"
+     fill="#fefee0"
+     text-anchor="middle"
+     dominant-baseline="alphabetic"
+     id="text2"
+     transform="skewX(-5.6317712)">a</text>
+  <path
+     d="m 148.15976,70.46526 c 0,0.765752 -0.54086,1.499925 -1.61894,2.208836 -1.02912,0.676716 -2.69923,1.508737 -5.01105,2.498838 -2.51932,1.078967 -6.73871,0.181327 -10.01358,1.222769 -3.44929,1.09691 -6.53434,2.483128 -9.76295,5.170853 -2.88575,2.402305 -7.16175,6.278682 -10.67511,5.976019 -1.0793,-0.09298 -3.23789,-0.278933 -3.23789,-0.278933 4.52278,-2.95619 7.15487,-4.401083 10.48461,-6.985246 7.04514,-5.467629 8.18165,-6.219784 12.7203,-7.845258 2.00442,-0.802142 4.49709,-1.521301 7.47801,-2.157478 2.46697,-0.52649 4.6762,-0.771179 6.62996,-0.751289 2.0037,0.0204 3.00664,0.32829 3.00664,0.940892 z"
+     id="text3"
+     style="font-weight:700;font-size:102.025px;font-family:Georgia, 'Times New Roman', serif;text-anchor:middle;fill:#9683ec;stroke-width:1.42;stroke-dasharray:none"
+     inkscape:transform-center-x="-1.1177501"
+     inkscape:transform-center-y="0.0983856"
+     aria-label="´"
+     sodipodi:nodetypes="sssasscscssss" />
+</svg>

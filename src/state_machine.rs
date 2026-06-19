@@ -26,12 +26,12 @@ pub enum AccentState {
     },
     LetterHeld {
         key: MappingKey,
-        variants: Vec<char>,
+        variants: Vec<String>,
         held_since: Instant,
     },
     Selecting {
         key: MappingKey,
-        variants: Vec<char>,
+        variants: Vec<String>,
         selected_index: usize,
         held_since: Instant,
     },
@@ -39,10 +39,10 @@ pub enum AccentState {
 
 #[derive(Debug, Clone)]
 pub enum GrabEvent {
-    ShowOverlay { variants: Vec<char>, index: usize },
+    ShowOverlay { variants: Vec<String>, index: usize },
     UpdateSelection(usize),
     HideOverlay,
-    InjectChar(char),
+    InjectChar(String),
     /// False start: letter released too quickly, replay the suppressed trigger key
     FalseStart,
 }
@@ -195,7 +195,7 @@ impl StateMachine {
                             self.state = AccentState::Idle;
                             return (true, Some(GrabEvent::FalseStart));
                         }
-                        let selected = variants[*selected_index];
+                        let selected = variants[*selected_index].clone();
                         // Enter cooldown so next letter+space is normal typing
                         self.state = AccentState::Cooldown {
                             until: Instant::now() + COOLDOWN_DURATION,

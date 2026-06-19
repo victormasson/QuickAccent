@@ -22,15 +22,15 @@ fn window_width_for(count: usize) -> f32 {
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    ShowOverlay(Vec<char>, usize),
+    ShowOverlay(Vec<String>, usize),
     UpdateSelection(usize),
     HideOverlay,
-    InjectChar(char),
+    InjectChar(String),
     WindowOpened(window::Id),
 }
 
 pub struct App {
-    variants: Vec<char>,
+    variants: Vec<String>,
     selected_index: usize,
     overlay_window: Option<window::Id>,
 }
@@ -101,7 +101,7 @@ impl App {
             .enumerate()
             .map(|(i, ch)| {
                 let is_selected = i == self.selected_index;
-                let label = text(ch.to_string()).size(28);
+                let label = text(ch.clone()).size(28);
 
                 let cell = container(label)
                     .padding([8, 14])

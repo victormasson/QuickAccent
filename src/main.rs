@@ -4,6 +4,8 @@ mod grab;
 mod injection;
 mod mappings;
 mod state_machine;
+#[cfg(target_os = "macos")]
+mod macos;
 
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -22,6 +24,9 @@ fn main() -> iced::Result {
     let grab_rx = Arc::new(Mutex::new(Some(rx)));
 
     grab::run_grab_thread(tx, &config);
+
+    #[cfg(target_os = "macos")]
+    crate::macos::setup_status_item();
 
     let grab_rx_clone = grab_rx.clone();
     iced::daemon("QuickAccent", app::App::update, app::App::view)

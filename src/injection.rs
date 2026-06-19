@@ -2,7 +2,7 @@ use enigo::{Enigo, Keyboard, Settings, Key, Direction};
 use std::thread;
 use std::time::Duration;
 
-pub fn inject_char(ch: char) {
+pub fn inject_char(ch: String) {
     thread::spawn(move || {
         let delay = Duration::from_millis(20);
         thread::sleep(delay);
@@ -23,7 +23,7 @@ pub fn inject_char(ch: char) {
         thread::sleep(delay);
 
         // Type the selected accent character
-        if let Err(e) = enigo.text(&ch.to_string()) {
+        if let Err(e) = enigo.text(&ch) {
             log::error!("Failed to inject character '{}': {}", ch, e);
         }
     });

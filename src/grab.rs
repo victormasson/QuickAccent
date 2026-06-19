@@ -200,7 +200,7 @@ mod platform {
                         keycode_raw, ge, suppress
                     );
                     match ge {
-                        GrabEvent::InjectChar(ch) => injection::inject_char(*ch),
+                        GrabEvent::InjectChar(ch) => injection::inject_char(ch.clone()),
                         GrabEvent::FalseStart => injection::inject_space(),
                         _ => {}
                     }
@@ -326,7 +326,7 @@ mod platform {
                             .handle_key_press(input, *shift_held.borrow());
                     if let Some(ref ge) = grab_event {
                         match ge {
-                            GrabEvent::InjectChar(ch) => injection::inject_char(*ch),
+                            GrabEvent::InjectChar(ch) => injection::inject_char(ch.clone()),
                             GrabEvent::FalseStart => injection::inject_space(),
                             _ => {}
                         }
@@ -340,7 +340,7 @@ mod platform {
                         state.borrow_mut().handle_key_release(input);
                     if let Some(ref ge) = grab_event {
                         match ge {
-                            GrabEvent::InjectChar(ch) => injection::inject_char(*ch),
+                            GrabEvent::InjectChar(ch) => injection::inject_char(ch.clone()),
                             GrabEvent::FalseStart => injection::inject_space(),
                             _ => {}
                         }
