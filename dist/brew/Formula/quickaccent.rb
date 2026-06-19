@@ -3,10 +3,10 @@ class Quickaccent < Formula
   homepage "https://github.com/victormasson/QuickAccent"
   license "MIT"
 
-  # head "https://github.com/victormasson/QuickAccent.git", branch: "master"
+  head "https://github.com/victormasson/QuickAccent.git", branch: "master"
 
   # Local source build (no network)
-  head "file:///Users/aclydes/Coding/QuickAccent", using: :git
+  # head "file:///Users/aclydes/Coding/QuickAccent", using: :git
 
   depends_on "rust" => :build
   depends_on :macos
