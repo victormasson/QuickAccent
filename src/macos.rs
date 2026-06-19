@@ -7,7 +7,9 @@ use objc::{msg_send, sel, sel_impl};
 pub fn setup_status_item() {
     unsafe {
         let app = NSApp();
-        app.setActivationPolicy_(cocoa::appkit::NSApplicationActivationPolicy::NSApplicationActivationPolicyAccessory);
+        app.setActivationPolicy_(
+            cocoa::appkit::NSApplicationActivationPolicy::NSApplicationActivationPolicyAccessory,
+        );
 
         let status_bar = NSStatusBar::systemStatusBar(nil);
         let status_item: id = msg_send![status_bar, statusItemWithLength: -1.0];
@@ -27,8 +29,11 @@ pub fn setup_status_item() {
         let menu = NSMenu::new(nil);
         let quit_title = NSString::alloc(nil).init_str("Quit QuickAccent");
         let q = NSString::alloc(nil).init_str("q");
-        let quit_item: id = NSMenuItem::alloc(nil)
-            .initWithTitle_action_keyEquivalent_(quit_title, selector("terminate:"), q);
+        let quit_item: id = NSMenuItem::alloc(nil).initWithTitle_action_keyEquivalent_(
+            quit_title,
+            selector("terminate:"),
+            q,
+        );
         menu.addItem_(quit_item);
 
         let _: () = msg_send![status_item, setMenu: menu];
