@@ -13,11 +13,42 @@ class Quickaccent < Formula
 
   def install
     system "cargo", "build", "--release"
-    bin.install "target/release/quickaccent"
+
+    # Install as macOS .app bundle (LSUIElement=true → no Dock icon)
+    app = prefix/"QuickAccent.app"
+    (app/"Contents/MacOS").mkpath
+    (app/"Contents/Resources").mkpath
+    cp "target/release/quickaccent", app/"Contents/MacOS/quickaccent"
+
+    # Write minimal Info.plist (agent app, no Dock icon)
+    (app/"Contents/Info.plist").write <<~PLIST
+      <?xml version="1.0" encoding="UTF-8"?>
+      <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+      <plist version="1.0">
+      <dict>
+        <key>CFBundleExecutable</key>
+        <string>quickaccent</string>
+        <key>CFBundleIdentifier</key>
+        <string>com.quickaccent.app</string>
+        <key>CFBundleName</key>
+        <string>QuickAccent</string>
+        <key>CFBundlePackageType</key>
+        <string>APPL</string>
+        <key>CFBundleVersion</key>
+        <string>0.1.0</string>
+        <key>CFBundleShortVersionString</key>
+        <string>0.1.0</string>
+        <key>LSUIElement</key>
+        <true/>
+        <key>LSMinimumSystemVersion</key>
+        <string>11.0</string>
+      </dict>
+      </plist>
+    PLIST
   end
 
   service do
-    run [opt_bin/"quickaccent"]
+    run [opt_prefix/"QuickAccent.app/Contents/MacOS/quickaccent"]
     keep_alive true
     run_at_load true
     log_path "/tmp/quickaccent.log"
