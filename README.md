@@ -13,31 +13,39 @@ Hold a letter → Space → pick an accent → release to insert.
 
 ## Install
 
-**Prerequisites:** Rust ([rustup](https://rustup.rs/)), macOS or Linux.
+Prebuilt binaries are published on every `master` push to the rolling
+[`continuous` release](https://github.com/victormasson/QuickAccent/releases/tag/continuous).
 
-### macOS
+### Linux (x86_64)
 
-Grant **Accessibility** (System Settings → Privacy & Security).
+```bash
+curl -fsSL https://raw.githubusercontent.com/victormasson/QuickAccent/master/dist/linux/install.sh | bash
+```
+
+Requires group `input` (re-login after install). That group can read all keyboards — trusted users only.  
+Details: [dist/linux/README.md](dist/linux/README.md).
+
+### macOS (universal)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/victormasson/QuickAccent/master/dist/macos/install.sh | bash
+open ~/Applications/QuickAccent.app
+```
+
+Grant **Accessibility** (System Settings → Privacy & Security).  
+Details: [dist/macos/README.md](dist/macos/README.md).
+
+Homebrew (builds from source):
 
 ```bash
 brew install --HEAD ./dist/brew/Formula/quickaccent.rb
-# or: cargo build --release
 ```
-
-### Linux
-
-```bash
-./dist/linux/install.sh
-```
-
-Uses evdev grab + enigo (Wayland virtual-keyboard / libei on GNOME / X11). Details: [dist/linux/README.md](dist/linux/README.md).
-
-Requires group `input` (re-login after install). That group can read all keyboards — trusted users only.
 
 ### From source
 
 ```bash
 cargo build --release   # → target/release/quickaccent
+# or: INSTALL_FROM_SOURCE=1 ./dist/linux/install.sh
 ```
 
 ## Config
@@ -54,11 +62,20 @@ languages = ["French", "German", "Spanish"]
 ## Usage
 
 ```bash
-./target/release/quickaccent
-RUST_LOG=debug ./target/release/quickaccent
+quickaccent
+RUST_LOG=debug quickaccent
 ```
 
 Runs as a background daemon. On Linux Wayland the overlay is centered (compositors block caret-relative placement).
+
+## CI / releases
+
+| Workflow | When | Output |
+|----------|------|--------|
+| [CI](.github/workflows/ci.yml) | every push / PR | Linux + macOS release build check |
+| [Release](.github/workflows/release.yml) | push to `master` | Assets on [`continuous`](https://github.com/victormasson/QuickAccent/releases/tag/continuous) |
+
+Assets: `quickaccent-linux-x86_64.tar.gz`, `QuickAccent-macos-universal.tar.gz`.
 
 ## Stack
 
