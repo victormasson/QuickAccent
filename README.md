@@ -72,10 +72,13 @@ Runs as a background daemon. On Linux Wayland the overlay is centered (composito
 
 | Workflow | When | Output |
 |----------|------|--------|
-| [CI](.github/workflows/ci.yml) | every push / PR | Linux + macOS release build check |
+| [CI](.github/workflows/ci.yml) | every push / PR | `cargo test` + release build (Linux + macOS) |
 | [Release](.github/workflows/release.yml) | push to `master` | Assets on [`continuous`](https://github.com/victormasson/QuickAccent/releases/tag/continuous) |
 
 Assets: `quickaccent-linux-x86_64.tar.gz`, `QuickAccent-macos-universal.tar.gz`.
+
+Unit tests cover the accent state machine, mappings, config, and helpers.  
+Desktop grab/inject: [docs/MANUAL_TEST.md](docs/MANUAL_TEST.md).
 
 ## Stack
 

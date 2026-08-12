@@ -149,3 +149,45 @@ const LETTERS: [MappingKey; 26] = [
     MappingKey::U, MappingKey::V, MappingKey::W, MappingKey::X, MappingKey::Y,
     MappingKey::Z,
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn letter_from_name_single_ascii() {
+        assert_eq!(letter_from_name("a"), Some(MappingKey::A));
+        assert_eq!(letter_from_name("E"), Some(MappingKey::E));
+        assert_eq!(letter_from_name("z"), Some(MappingKey::Z));
+    }
+
+    #[test]
+    fn letter_from_name_rejects_multi_or_empty() {
+        assert_eq!(letter_from_name(""), None);
+        assert_eq!(letter_from_name("ab"), None);
+        assert_eq!(letter_from_name("1"), None);
+        assert_eq!(letter_from_name("é"), None);
+    }
+
+    #[test]
+    fn char_to_key_case_insensitive() {
+        assert_eq!(char_to_key('Q'), Some(MappingKey::Q));
+        assert_eq!(char_to_key('q'), Some(MappingKey::Q));
+        assert_eq!(char_to_key('@'), None);
+    }
+
+    #[test]
+    fn us_layout_identity_for_physical_qwerty_letters() {
+        // Force US layout for this process/thread map build.
+        std::env::set_var("XKB_DEFAULT_LAYOUT", "us");
+        std::env::set_var("XKB_DEFAULT_VARIANT", "");
+        // logical_letter uses thread_local OnceCell — first call wins per thread.
+        // Run in a fresh thread so env is picked up.
+        let handle = std::thread::spawn(|| {
+            assert_eq!(logical_letter(MappingKey::Q), MappingKey::Q);
+            assert_eq!(logical_letter(MappingKey::A), MappingKey::A);
+            assert_eq!(logical_letter(MappingKey::E), MappingKey::E);
+        });
+        handle.join().expect("xkb thread");
+    }
+}

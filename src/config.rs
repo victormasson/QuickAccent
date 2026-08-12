@@ -125,3 +125,67 @@ pub fn read_config() -> Option<Config> {
         .ok()
         .and_then(|contents| toml::from_str::<Config>(&contents).ok())
 }
+
+/// Parse config from a TOML string (tests + future tooling).
+pub fn parse_config_str(contents: &str) -> Result<Config, toml::de::Error> {
+    toml::from_str(contents)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn defaults() {
+        let c = Config::default();
+        assert_eq!(c.languages, vec!["French".to_string()]);
+        assert_eq!(c.input_time_ms, 200);
+        assert_eq!(c.hold_delay_ms, 250);
+        assert_eq!(c.activation_key, "Both");
+        assert_eq!(c.activation_key_parsed(), ActivationKey::Both);
+    }
+
+    #[test]
+    fn missing_fields_use_defaults() {
+        let c = parse_config_str("# no keys\n").unwrap();
+        assert_eq!(c.languages, vec!["French".to_string()]);
+        assert_eq!(c.input_time_ms, 200);
+        assert_eq!(c.hold_delay_ms, 250);
+        assert_eq!(c.activation_key_parsed(), ActivationKey::Both);
+    }
+
+    #[test]
+    fn full_toml_parse() {
+        let c = parse_config_str(
+            r#"
+            languages = ["German", "Spanish"]
+            input_time_ms = 100
+            hold_delay_ms = 300
+            activation_key = "Space"
+            "#,
+        )
+        .unwrap();
+        assert_eq!(c.languages, vec!["German".to_string(), "Spanish".to_string()]);
+        assert_eq!(c.input_time_ms, 100);
+        assert_eq!(c.hold_delay_ms, 300);
+        assert_eq!(c.activation_key_parsed(), ActivationKey::Space);
+    }
+
+    #[test]
+    fn activation_key_parsing() {
+        let mut c = Config::default();
+        c.activation_key = "Space".into();
+        assert_eq!(c.activation_key_parsed(), ActivationKey::Space);
+        c.activation_key = "LeftRightArrow".into();
+        assert_eq!(c.activation_key_parsed(), ActivationKey::LeftRightArrow);
+        c.activation_key = "Both".into();
+        assert_eq!(c.activation_key_parsed(), ActivationKey::Both);
+        c.activation_key = "whatever".into();
+        assert_eq!(c.activation_key_parsed(), ActivationKey::Both);
+    }
+
+    #[test]
+    fn invalid_toml_errors() {
+        assert!(parse_config_str("languages = [").is_err());
+    }
+}

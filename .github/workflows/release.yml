@@ -36,6 +36,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
+      - name: Test
+        run: cargo test --all-targets
+
       - name: Build
         run: cargo build --release
 
@@ -67,6 +70,9 @@ jobs:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
 
       - uses: Swatinem/rust-cache@v2
+
+      - name: Test
+        run: cargo test --all-targets
 
       - name: Build universal binary
         run: |

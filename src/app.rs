@@ -20,6 +20,19 @@ fn window_width_for(count: usize) -> f32 {
     PADDING + (count as f32 * CELL_WIDTH)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn window_width_grows_with_variant_count() {
+        assert!(window_width_for(1) < window_width_for(2));
+        assert!(window_width_for(4) < window_width_for(8));
+        assert_eq!(window_width_for(0), PADDING);
+        assert_eq!(window_width_for(2), PADDING + 2.0 * CELL_WIDTH);
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum Message {
     ShowOverlay(Vec<String>, usize),
