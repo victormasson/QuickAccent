@@ -1,0 +1,15 @@
+[Unit]
+Description=QuickAccent accent character picker
+Documentation=https://github.com/victormasson/QuickAccent
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/quickaccent
+Restart=on-failure
+RestartSec=2
+# Useful when debugging: Environment=RUST_LOG=debug
+
+[Install]
+WantedBy=graphical-session.target

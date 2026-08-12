@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=QuickAccent
+Comment=Hold a letter, press Space, pick an accent character
+Exec=quickaccent
+Icon=quickaccent
+Terminal=false
+Categories=Utility;Accessibility;
+StartupNotify=false
+X-GNOME-Autostart-enabled=true
+X-GNOME-UsesNotifications=false

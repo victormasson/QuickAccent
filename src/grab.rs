@@ -259,46 +259,79 @@ mod platform {
 #[cfg(target_os = "linux")]
 mod platform {
     use super::*;
+    use crate::mappings::MappingKey;
+    use crate::xkb_map;
     use rdev::{grab, Event, EventType, Key};
 
-    fn rdev_key_to_input(key: Key) -> KeyInput {
-        use crate::mappings::MappingKey;
+    fn physical_letter(key: Key) -> Option<MappingKey> {
         match key {
-            Key::KeyA => KeyInput::Letter(MappingKey::A),
-            Key::KeyB => KeyInput::Letter(MappingKey::B),
-            Key::KeyC => KeyInput::Letter(MappingKey::C),
-            Key::KeyD => KeyInput::Letter(MappingKey::D),
-            Key::KeyE => KeyInput::Letter(MappingKey::E),
-            Key::KeyF => KeyInput::Letter(MappingKey::F),
-            Key::KeyG => KeyInput::Letter(MappingKey::G),
-            Key::KeyH => KeyInput::Letter(MappingKey::H),
-            Key::KeyI => KeyInput::Letter(MappingKey::I),
-            Key::KeyJ => KeyInput::Letter(MappingKey::J),
-            Key::KeyK => KeyInput::Letter(MappingKey::K),
-            Key::KeyL => KeyInput::Letter(MappingKey::L),
-            Key::KeyM => KeyInput::Letter(MappingKey::M),
-            Key::KeyN => KeyInput::Letter(MappingKey::N),
-            Key::KeyO => KeyInput::Letter(MappingKey::O),
-            Key::KeyP => KeyInput::Letter(MappingKey::P),
-            Key::KeyQ => KeyInput::Letter(MappingKey::Q),
-            Key::KeyR => KeyInput::Letter(MappingKey::R),
-            Key::KeyS => KeyInput::Letter(MappingKey::S),
-            Key::KeyT => KeyInput::Letter(MappingKey::T),
-            Key::KeyU => KeyInput::Letter(MappingKey::U),
-            Key::KeyV => KeyInput::Letter(MappingKey::V),
-            Key::KeyW => KeyInput::Letter(MappingKey::W),
-            Key::KeyX => KeyInput::Letter(MappingKey::X),
-            Key::KeyY => KeyInput::Letter(MappingKey::Y),
-            Key::KeyZ => KeyInput::Letter(MappingKey::Z),
+            Key::KeyA => Some(MappingKey::A),
+            Key::KeyB => Some(MappingKey::B),
+            Key::KeyC => Some(MappingKey::C),
+            Key::KeyD => Some(MappingKey::D),
+            Key::KeyE => Some(MappingKey::E),
+            Key::KeyF => Some(MappingKey::F),
+            Key::KeyG => Some(MappingKey::G),
+            Key::KeyH => Some(MappingKey::H),
+            Key::KeyI => Some(MappingKey::I),
+            Key::KeyJ => Some(MappingKey::J),
+            Key::KeyK => Some(MappingKey::K),
+            Key::KeyL => Some(MappingKey::L),
+            Key::KeyM => Some(MappingKey::M),
+            Key::KeyN => Some(MappingKey::N),
+            Key::KeyO => Some(MappingKey::O),
+            Key::KeyP => Some(MappingKey::P),
+            Key::KeyQ => Some(MappingKey::Q),
+            Key::KeyR => Some(MappingKey::R),
+            Key::KeyS => Some(MappingKey::S),
+            Key::KeyT => Some(MappingKey::T),
+            Key::KeyU => Some(MappingKey::U),
+            Key::KeyV => Some(MappingKey::V),
+            Key::KeyW => Some(MappingKey::W),
+            Key::KeyX => Some(MappingKey::X),
+            Key::KeyY => Some(MappingKey::Y),
+            Key::KeyZ => Some(MappingKey::Z),
+            _ => None,
+        }
+    }
+
+    fn event_to_input(event: &Event) -> KeyInput {
+        let EventType::KeyPress(key) | EventType::KeyRelease(key) = event.event_type else {
+            return KeyInput::Other;
+        };
+        match key {
             Key::Space => KeyInput::Space,
             Key::Escape => KeyInput::Escape,
             Key::LeftArrow => KeyInput::LeftArrow,
             Key::RightArrow => KeyInput::RightArrow,
-            _ => KeyInput::Other,
+            other => {
+                if let Some(mk) = event.name.as_deref().and_then(xkb_map::letter_from_name) {
+                    return KeyInput::Letter(mk);
+                }
+                match physical_letter(other) {
+                    Some(p) => KeyInput::Letter(xkb_map::logical_letter(p)),
+                    None => KeyInput::Other,
+                }
+            }
         }
     }
 
-    pub fn run_grab(tx: UnboundedSender<GrabEvent>, input_time_ms: u64, hold_delay_ms: u64, activation_key: ActivationKey) {
+    fn dispatch(tx: &UnboundedSender<GrabEvent>, ge: GrabEvent) {
+        match &ge {
+            GrabEvent::InjectChar(ch) => injection::inject_char(ch.clone()),
+            GrabEvent::FalseStart => injection::inject_space(),
+            _ => {}
+        }
+        let _ = tx.send(ge);
+    }
+
+    pub fn run_grab(
+        tx: UnboundedSender<GrabEvent>,
+        input_time_ms: u64,
+        hold_delay_ms: u64,
+        activation_key: ActivationKey,
+    ) {
+        let _ = xkb_map::logical_letter(MappingKey::A); // warm layout map
         let state = RefCell::new(StateMachine::new(input_time_ms, hold_delay_ms, activation_key));
         let shift_held = RefCell::new(false);
 
@@ -307,54 +340,50 @@ mod platform {
                 EventType::KeyPress(Key::ShiftLeft | Key::ShiftRight) => {
                     *shift_held.borrow_mut() = true;
                     if let Some(ge) = state.borrow_mut().update_shift(true) {
-                        tx.send(ge).ok();
+                        let _ = tx.send(ge);
                     }
                     Some(event)
                 }
                 EventType::KeyRelease(Key::ShiftLeft | Key::ShiftRight) => {
                     *shift_held.borrow_mut() = false;
                     if let Some(ge) = state.borrow_mut().update_shift(false) {
-                        tx.send(ge).ok();
+                        let _ = tx.send(ge);
                     }
                     Some(event)
                 }
-                EventType::KeyPress(key) => {
-                    let input = rdev_key_to_input(key);
-                    let (suppress, grab_event) =
-                        state
-                            .borrow_mut()
-                            .handle_key_press(input, *shift_held.borrow());
-                    if let Some(ref ge) = grab_event {
-                        match ge {
-                            GrabEvent::InjectChar(ch) => injection::inject_char(ch.clone()),
-                            GrabEvent::FalseStart => injection::inject_space(),
-                            _ => {}
-                        }
-                        tx.send(ge.clone()).ok();
+                EventType::KeyPress(_) => {
+                    let (suppress, ge) = state
+                        .borrow_mut()
+                        .handle_key_press(event_to_input(&event), *shift_held.borrow());
+                    if let Some(ge) = ge {
+                        dispatch(&tx, ge);
                     }
-                    if suppress { None } else { Some(event) }
+                    if suppress {
+                        None
+                    } else {
+                        Some(event)
+                    }
                 }
-                EventType::KeyRelease(key) => {
-                    let input = rdev_key_to_input(key);
-                    let (suppress, grab_event) =
-                        state.borrow_mut().handle_key_release(input);
-                    if let Some(ref ge) = grab_event {
-                        match ge {
-                            GrabEvent::InjectChar(ch) => injection::inject_char(ch.clone()),
-                            GrabEvent::FalseStart => injection::inject_space(),
-                            _ => {}
-                        }
-                        tx.send(ge.clone()).ok();
+                EventType::KeyRelease(_) => {
+                    let (suppress, ge) = state.borrow_mut().handle_key_release(event_to_input(&event));
+                    if let Some(ge) = ge {
+                        dispatch(&tx, ge);
                     }
-                    if suppress { None } else { Some(event) }
+                    if suppress {
+                        None
+                    } else {
+                        Some(event)
+                    }
                 }
                 _ => Some(event),
             }
         };
 
-        match grab(callback) {
-            Ok(()) => eprintln!("[QuickAccent] Grab ended normally."),
-            Err(e) => eprintln!("[QuickAccent] ERROR: Grab failed: {:?}", e),
+        if let Err(e) = grab(callback) {
+            eprintln!(
+                "[QuickAccent] grab failed: {e:?}\n\
+                 Need /dev/input access: sudo usermod -aG input $USER (re-login), or ./dist/linux/install.sh"
+            );
         }
     }
 }
@@ -364,8 +393,12 @@ pub fn run_grab_thread(tx: UnboundedSender<GrabEvent>, config: &Config) {
     let hold_delay_ms = config.hold_delay_ms;
     let activation_key = config.activation_key_parsed();
     std::thread::spawn(move || {
-        eprintln!("[QuickAccent] Starting keyboard grab...");
-        eprintln!("[QuickAccent] Make sure Accessibility permissions are granted.");
+        #[cfg(target_os = "macos")]
+        eprintln!("[QuickAccent] Starting grab (grant Accessibility if needed)...");
+        #[cfg(target_os = "linux")]
+        eprintln!("[QuickAccent] Starting grab (user must be in group 'input')...");
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        eprintln!("[QuickAccent] Starting grab...");
         platform::run_grab(tx, input_time_ms, hold_delay_ms, activation_key);
     });
 }

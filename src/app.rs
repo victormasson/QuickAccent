@@ -1,5 +1,5 @@
 use iced::futures::SinkExt;
-use iced::widget::{container, row, text, Themer};
+use iced::widget::{container, row, text};
 use iced::window;
 use iced::{color, Element, Length, Subscription, Task, Theme};
 use std::sync::{Arc, Mutex};
