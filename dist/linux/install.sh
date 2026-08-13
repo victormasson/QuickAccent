@@ -8,7 +8,6 @@ ASSET="quickaccent-linux-x86_64.tar.gz"
 BIN_DIR="${PREFIX:-$HOME/.local}/bin"
 UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 APP_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
-AUTO_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/autostart"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd 2>/dev/null || true)"
 
 arch="$(uname -m)"
@@ -65,7 +64,7 @@ else
 fi
 
 echo "==> Install binary + desktop files"
-mkdir -p "$BIN_DIR" "$UNIT_DIR" "$APP_DIR" "$AUTO_DIR"
+mkdir -p "$BIN_DIR" "$UNIT_DIR" "$APP_DIR"
 install -m 755 "$PKG/quickaccent" "$BIN_DIR/quickaccent"
 
 if [[ -f "$PKG/quickaccent.service" ]]; then
@@ -84,9 +83,7 @@ elif [[ -n "${ROOT:-}" && -f "$ROOT/dist/linux/quickaccent.desktop" ]]; then
   DESKTOP_SRC="$ROOT/dist/linux/quickaccent.desktop"
 fi
 if [[ -n "$DESKTOP_SRC" ]]; then
-  for d in "$APP_DIR" "$AUTO_DIR"; do
-    sed "s|^Exec=.*|Exec=$BIN_DIR/quickaccent|" "$DESKTOP_SRC" > "$d/quickaccent.desktop"
-  done
+  sed "s|^Exec=.*|Exec=$BIN_DIR/quickaccent|" "$DESKTOP_SRC" > "$APP_DIR/quickaccent.desktop"
 fi
 
 RULE_SRC=""
@@ -121,8 +118,9 @@ echo
 echo "Installed $BIN_DIR/quickaccent"
 echo "  • group 'input' can read all keyboards — trusted users only"
 echo "  • GNOME Wayland: approve the input / Remote Desktop portal when prompted"
+echo "  • install wl-clipboard so accents missing from the keymap can paste"
 if [[ "${NEED_RELOGIN:-0}" -eq 1 ]]; then
-  echo "  • log out and back in so group 'input' applies"
+  echo "  • reboot so group 'input' applies to systemd --user (logout is not enough)"
 else
   echo "  • start: systemctl --user restart quickaccent.service"
 fi
