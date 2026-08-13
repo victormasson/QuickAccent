@@ -296,7 +296,7 @@ mod platform {
     }
 
     fn event_to_input(event: &Event) -> KeyInput {
-        let EventType::KeyPress(key) | EventType::KeyRelease(key) = event.event_type else {
+        let (EventType::KeyPress(key) | EventType::KeyRelease(key)) = event.event_type else {
             return KeyInput::Other;
         };
         match key {
