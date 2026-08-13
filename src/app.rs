@@ -1,5 +1,5 @@
 use iced::futures::SinkExt;
-use iced::widget::{container, row, text, Themer};
+use iced::widget::{container, row, text};
 use iced::window;
 use iced::{color, Element, Length, Subscription, Task, Theme};
 use std::sync::{Arc, Mutex};
@@ -18,6 +18,19 @@ const WINDOW_HEIGHT: f32 = 70.0;
 
 fn window_width_for(count: usize) -> f32 {
     PADDING + (count as f32 * CELL_WIDTH)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn window_width_grows_with_variant_count() {
+        assert!(window_width_for(1) < window_width_for(2));
+        assert!(window_width_for(4) < window_width_for(8));
+        assert_eq!(window_width_for(0), PADDING);
+        assert_eq!(window_width_for(2), PADDING + 2.0 * CELL_WIDTH);
+    }
 }
 
 #[derive(Debug, Clone)]

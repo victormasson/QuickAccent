@@ -415,3 +415,67 @@ fn get_language_data(name: &str) -> Option<LangData> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn french_e_has_accents() {
+        init(&["French".into()]);
+        let v = get_variants(MappingKey::E, false);
+        assert!(v.contains(&"é".into()));
+        assert!(v.contains(&"è".into()));
+        assert!(!v.is_empty());
+    }
+
+    #[test]
+    fn uppercase_variants() {
+        init(&["French".into()]);
+        let v = get_variants(MappingKey::E, true);
+        assert!(v.iter().any(|s| s == "É" || s.starts_with('É')));
+        assert!(v.iter().all(|s| s.chars().next().unwrap().is_uppercase()));
+    }
+
+    #[test]
+    fn merge_languages_dedupes() {
+        init(&["French".into(), "Spanish".into()]);
+        let v = get_variants(MappingKey::E, false);
+        let mut seen = std::collections::HashSet::new();
+        for ch in &v {
+            assert!(seen.insert(ch.clone()), "duplicate {ch}");
+        }
+        // Spanish/French both contribute e accents
+        assert!(v.len() >= 2);
+    }
+
+    #[test]
+    fn unknown_language_does_not_panic() {
+        init(&["NotARealLanguage".into()]);
+        let v = get_variants(MappingKey::E, false);
+        assert!(v.is_empty());
+    }
+
+    #[test]
+    fn reload_replaces_map() {
+        init(&["French".into()]);
+        assert!(!get_variants(MappingKey::E, false).is_empty());
+        reload(&["NotARealLanguage".into()]);
+        assert!(get_variants(MappingKey::E, false).is_empty());
+        reload(&["German".into()]);
+        let v = get_variants(MappingKey::A, false);
+        assert!(v.contains(&"ä".into()) || !v.is_empty());
+    }
+
+    #[test]
+    fn key_without_entry_returns_empty() {
+        init(&["French".into()]);
+        // W has no French entry in typical set
+        let french_w = get_language_data("French")
+            .map(|d| d.iter().any(|(k, _)| *k == MappingKey::W))
+            .unwrap_or(false);
+        if !french_w {
+            assert!(get_variants(MappingKey::W, false).is_empty());
+        }
+    }
+}

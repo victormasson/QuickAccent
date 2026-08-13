@@ -3,6 +3,9 @@ class Quickaccent < Formula
   homepage "https://github.com/victormasson/QuickAccent"
   license "MIT"
 
+  # Prebuilt universal binary (no Rust): dist/macos/install.sh
+  # https://github.com/victormasson/QuickAccent/releases/tag/continuous
+
   head "https://github.com/victormasson/QuickAccent.git", branch: "master"
 
   # Local source build (no network)
@@ -68,6 +71,9 @@ class Quickaccent < Formula
 
       IMPORTANT: Grant Accessibility permission:
         System Settings → Privacy & Security → Accessibility → add QuickAccent (or your terminal).
+
+      Prebuilt (no Rust) alternative:
+        curl -fsSL https://raw.githubusercontent.com/victormasson/QuickAccent/master/dist/macos/install.sh | bash
 
       To start immediately (without logging out/in):
         launchctl load ~/Library/LaunchAgents/com.quickaccent.app.plist

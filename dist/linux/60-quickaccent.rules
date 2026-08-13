@@ -1,0 +1,4 @@
+# QuickAccent — allow members of group "input" to grab keyboards and use uinput.
+# Install: sudo cp 60-quickaccent.rules /etc/udev/rules.d/ && sudo udevadm control --reload-rules && sudo udevadm trigger
+KERNEL=="uinput", GROUP="input", MODE="0660", OPTIONS+="static_node=uinput"
+KERNEL=="event*", SUBSYSTEM=="input", GROUP="input", MODE="0660"

@@ -4,6 +4,8 @@ mod grab;
 mod injection;
 mod mappings;
 mod state_machine;
+#[cfg(target_os = "linux")]
+mod xkb_map;
 #[cfg(target_os = "macos")]
 mod macos;
 
@@ -19,6 +21,8 @@ fn main() -> iced::Result {
     mappings::init(&config.languages);
 
     start_config_watcher();
+
+    injection::start();
 
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     let grab_rx = Arc::new(Mutex::new(Some(rx)));

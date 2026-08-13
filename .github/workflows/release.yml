@@ -1,0 +1,152 @@
+name: Release
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: release-continuous
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  linux:
+    name: package-linux-x86_64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            pkg-config \
+            libxkbcommon-dev \
+            libevdev-dev \
+            libwayland-dev \
+            libfontconfig-dev \
+            libasound2-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Test
+        run: cargo test --all-targets
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Package
+        run: |
+          strip target/release/quickaccent || true
+          STAGE=quickaccent-linux-x86_64
+          mkdir -p "$STAGE"
+          cp target/release/quickaccent "$STAGE/"
+          cp dist/linux/quickaccent.service "$STAGE/"
+          cp dist/linux/quickaccent.desktop "$STAGE/"
+          cp dist/linux/60-quickaccent.rules "$STAGE/"
+          tar -czf quickaccent-linux-x86_64.tar.gz "$STAGE"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-x86_64
+          path: quickaccent-linux-x86_64.tar.gz
+          if-no-files-found: error
+
+  macos:
+    name: package-macos-universal
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Test
+        run: cargo test --all-targets
+
+      - name: Build universal binary
+        run: |
+          cargo build --release --target aarch64-apple-darwin
+          cargo build --release --target x86_64-apple-darwin
+          lipo -create -output quickaccent-universal \
+            target/aarch64-apple-darwin/release/quickaccent \
+            target/x86_64-apple-darwin/release/quickaccent
+          lipo -info quickaccent-universal
+
+      - name: Package .app
+        run: |
+          APP=QuickAccent.app
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+          cp quickaccent-universal "$APP/Contents/MacOS/quickaccent"
+          chmod +x "$APP/Contents/MacOS/quickaccent"
+          cp dist/macos/QuickAccent.app/Contents/Info.plist "$APP/Contents/Info.plist"
+          tar -czf QuickAccent-macos-universal.tar.gz "$APP"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-universal
+          path: QuickAccent-macos-universal.tar.gz
+          if-no-files-found: error
+
+  publish:
+    name: publish-continuous
+    needs: [linux, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -la artifacts/
+
+      - name: Publish continuous release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: continuous
+          name: continuous
+          prerelease: true
+          make_latest: true
+          overwrite_files: true
+          generate_release_notes: false
+          body: |
+            Rolling build from `master` (updated on every push).
+
+            **Commit:** ${{ github.sha }}
+            **Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+            ### Assets
+            | File | Platform |
+            |------|----------|
+            | `quickaccent-linux-x86_64.tar.gz` | Linux x86_64 |
+            | `QuickAccent-macos-universal.tar.gz` | macOS universal (arm64 + x86_64) |
+
+            ### Install
+            ```bash
+            # Linux
+            curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/master/dist/linux/install.sh | bash
+
+            # macOS
+            curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/master/dist/macos/install.sh | bash
+            ```
+
+            Or download assets from this release and follow [README](https://github.com/${{ github.repository }}#install).
+          files: |
+            artifacts/quickaccent-linux-x86_64.tar.gz
+            artifacts/QuickAccent-macos-universal.tar.gz
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
