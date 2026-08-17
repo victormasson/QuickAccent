@@ -29,15 +29,21 @@ From a clone (still downloads the CI asset, does not compile):
 | `PREFIX` | `~/.local` | Install prefix (`bin/`) |
 | `INSTALL_FROM_SOURCE` | `0` | Set `1` to `cargo build` instead |
 
-## GNOME Wayland checklist
+## Checklist (all desktops)
 
 1. Group `input` + udev rule (`/dev/input/event*` and `/dev/uinput`) — the
    installer does this with sudo.
 2. **Reboot** after being added to `input`. A GNOME logout does not restart
    `systemd --user`, so grab stays `Permission denied`.
-3. Approve the **Remote Desktop / input** portal when GNOME asks.
-4. Install `wl-clipboard`. Accents missing from the keymap (`é` on US, etc.)
-   are injected with `wl-copy` + Ctrl+V.
+
+Injection is always direct — no permission prompt, no clipboard. Accents your
+layout lacks (`é` on US, `É` on AZERTY…) are **added to the keymap** at
+startup: QuickAccent generates the xkb option `quickaccent:accents` in
+`~/.config/xkb/` (mapping them onto spare keycodes F13–F24) and enables it in
+GNOME's `xkb-options`; the compositor reloads the keymap live and the
+characters are typed as ordinary keystrokes through uinput. Remove with
+`gsettings reset org.gnome.desktop.input-sources xkb-options` (restores your
+previous options minus ours) and delete `~/.config/xkb/symbols/quickaccent`.
 
 Do not also enable the desktop autostart entry if the systemd user unit is
 on — two instances fight over the evdev grab (`Device or resource busy`).
@@ -51,21 +57,33 @@ systemctl --user restart quickaccent.service
 
 | Need | Why |
 |------|-----|
-| Group `input` + udev rule | Evdev grab + uinput replay |
+| Group `input` + udev rule | Evdev grab + uinput virtual keyboard |
+| `uinput` module loaded | The installer adds `/etc/modules-load.d/uinput.conf` |
 | Reboot after `usermod` | User systemd session picks up `input` |
-| Portal approve (GNOME) | libei injection |
-| `wl-clipboard` | Paste fallback for unmapped accents |
+| `wl-clipboard` (optional) | Emergency fallback only |
 | x86_64 | Prebuilt asset (else build from source) |
 
 **Security:** `input` can read all keystrokes. Trusted accounts only.
 
-## Injection backends
+## How typing works (macOS-style)
 
-| Session | Backend |
-|---------|---------|
-| GNOME Wayland | libei + XDG portal, then `wl-copy` + Ctrl+V if the key is not mapped |
-| KDE / Hyprland / Sway | Wayland virtual-keyboard (same clipboard fallback) |
-| X11 | XTEST (not XWayland) |
+- A letter with accent variants is held back until you release the key — it
+  appears on key **release** (~a keystroke later when typing normally), and
+  holding it does **not** auto-repeat, exactly like macOS press-and-hold.
+- Hold the letter, press Space → the picker opens and the plain letter is
+  never typed. Cycle with Space/arrows, release the letter to insert the
+  accent — no backspace, no cursor jump.
+- Escape closes the picker and types the plain letter.
+
+## Injection backend (all sessions: Wayland, X11)
+
+Most direct mechanism first — the clipboard is a last resort only:
+
+| Case | Mechanism |
+|------|-----------|
+| Accent in the keymap — natively, or added by the auto-installed `quickaccent:accents` xkb option (GNOME) | uinput key combo — instant, no authorization, all apps incl. terminals |
+| Keymap extension unavailable (non-GNOME desktops, slot overflow) | Portal keysym injection — one-time authorization, persisted via restore token. Note: mutter only types keysyms already in the keymap |
+| Portal denied/unavailable | `wl-copy` + virtual Ctrl+V, loudly logged. Terminals treat Ctrl+V literally |
 
 ## From source
 

@@ -94,10 +94,15 @@ elif [[ -n "${ROOT:-}" && -f "$ROOT/dist/linux/60-quickaccent.rules" ]]; then
 fi
 
 if [[ -n "$RULE_SRC" ]] && command -v sudo >/dev/null 2>&1; then
-  echo "==> udev + input group (sudo)"
+  echo "==> udev + uinput module + input group (sudo)"
   sudo install -m 644 "$RULE_SRC" /etc/udev/rules.d/60-quickaccent.rules
   sudo udevadm control --reload-rules || true
   sudo udevadm trigger || true
+
+  # uinput must be loaded at boot: QuickAccent types through a virtual
+  # keyboard (no desktop portal needed).
+  echo uinput | sudo tee /etc/modules-load.d/uinput.conf >/dev/null
+  sudo modprobe uinput || true
 
   NEED_RELOGIN=0
   if ! id -nG | tr ' ' '\n' | grep -qx input; then
@@ -117,8 +122,8 @@ fi
 echo
 echo "Installed $BIN_DIR/quickaccent"
 echo "  • group 'input' can read all keyboards — trusted users only"
-echo "  • GNOME Wayland: approve the input / Remote Desktop portal when prompted"
-echo "  • install wl-clipboard so accents missing from the keymap can paste"
+echo "  • accents your layout lacks are added to the keymap automatically"
+echo "    (xkb option quickaccent:accents in ~/.config/xkb) — no prompts"
 if [[ "${NEED_RELOGIN:-0}" -eq 1 ]]; then
   echo "  • reboot so group 'input' applies to systemd --user (logout is not enough)"
 else

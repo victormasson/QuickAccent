@@ -1,0 +1,374 @@
+//! Put the accent characters INTO the keyboard layout, so they can be typed
+//! as plain keystrokes through the uinput virtual keyboard — in every app,
+//! with no portal and no clipboard.
+//!
+//! Mechanism: libxkbcommon (used by mutter to compile the seat keymap) reads
+//! user configuration from `~/.config/xkb`. We generate an xkb *option*
+//! (`quickaccent:accents`) that maps the accent characters onto spare
+//! keycodes no physical keyboard emits (F13–F23 + a few dead multimedia
+//! codes), with F24 acting as a virtual AltGr (`ISO_Level3_Shift`) so each
+//! key carries four characters. Adding the option to GNOME's
+//! `org.gnome.desktop.input-sources xkb-options` makes mutter recompile the
+//! keymap live. This is how tools like keyd type Unicode on Wayland.
+
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// KEY_F24 — mapped to ISO_Level3_Shift by our option; pressed by the
+/// virtual keyboard to reach levels 3/4.
+pub const LEVEL3_CODE: u16 = 194;
+
+/// Spare keys for characters: (xkb key name, evdev code).
+/// F13–F23, then keycodes with no default symbols anywhere (KEY_BASSBOOST,
+/// KEY_HP, KEY_XFER, KEY_ALTERASE) — nothing a real keyboard sends.
+const SLOT_KEYS: &[(&str, u16)] = &[
+    ("FK13", 183),
+    ("FK14", 184),
+    ("FK15", 185),
+    ("FK16", 186),
+    ("FK17", 187),
+    ("FK18", 188),
+    ("FK19", 189),
+    ("FK20", 190),
+    ("FK21", 191),
+    ("FK22", 192),
+    ("FK23", 193),
+    ("I217", 209),
+    ("I219", 211),
+    ("I222", 214),
+    ("I230", 222),
+];
+
+pub const OPTION_NAME: &str = "quickaccent:accents";
+
+static ACTIVE: AtomicBool = AtomicBool::new(false);
+
+/// True once the option files are installed and listed in the desktop's
+/// xkb-options (i.e. the compositor's keymap contains our keys).
+pub fn is_active() -> bool {
+    ACTIVE.load(Ordering::SeqCst)
+}
+
+/// Install/refresh the custom option for the given characters (those the
+/// base layout cannot type). Idempotent; only rewrites and re-triggers a
+/// keymap reload when the generated content actually changed.
+pub fn ensure_installed(missing: &[char]) {
+    if missing.is_empty() {
+        // Nothing to add; if the option was installed earlier it stays —
+        // harmless — but we don't need it active for combos.
+        return;
+    }
+    let (symbols, overflow) = generate_symbols(missing);
+    if overflow > 0 {
+        eprintln!(
+            "[QuickAccent] {overflow} accent characters exceed the {} custom key slots; \
+             they will use the fallback path",
+            SLOT_KEYS.len() * 4
+        );
+    }
+
+    let symbols_path = xkb_dir().join("symbols").join("quickaccent");
+    let changed = match std::fs::read_to_string(&symbols_path) {
+        Ok(existing) => existing != symbols,
+        Err(_) => true,
+    };
+    if changed {
+        if let Err(e) = write_file(&symbols_path, &symbols) {
+            eprintln!("[QuickAccent] cannot write {}: {e}", symbols_path.display());
+            return;
+        }
+    }
+    if let Err(e) = ensure_rules() {
+        eprintln!("[QuickAccent] cannot set up ~/.config/xkb rules: {e}");
+        return;
+    }
+
+    match ensure_gnome_option(changed) {
+        Some(true) => {
+            ACTIVE.store(true, Ordering::SeqCst);
+            if changed {
+                eprintln!(
+                    "[QuickAccent] keyboard layout extended with {} accent characters \
+                     (xkb option {OPTION_NAME})",
+                    missing.len() - overflow
+                );
+            }
+        }
+        Some(false) => eprintln!(
+            "[QuickAccent] could not enable xkb option {OPTION_NAME} in GNOME settings"
+        ),
+        // Not GNOME: files are in place; other desktops need the option added
+        // to their own xkb configuration.
+        None => eprintln!(
+            "[QuickAccent] non-GNOME desktop: add the xkb option '{OPTION_NAME}' to your \
+             compositor's keyboard settings for direct accent typing"
+        ),
+    }
+}
+
+fn xkb_dir() -> PathBuf {
+    std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            dirs::home_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join(".config")
+        })
+        .join("xkb")
+}
+
+fn write_file(path: &std::path::Path, content: &str) -> std::io::Result<()> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(path, content)
+}
+
+/// Build the symbols file. Characters are paired (lowercase, uppercase) on
+/// levels (1,2) and (3,4) of each slot key. Returns (content, overflow_count).
+fn generate_symbols(missing: &[char]) -> (String, usize) {
+    let pairs = case_pairs(missing);
+    let capacity = SLOT_KEYS.len() * 2;
+    let overflow_pairs = pairs.len().saturating_sub(capacity);
+    let overflow: usize = pairs[pairs.len() - overflow_pairs..]
+        .iter()
+        .map(|(a, b)| if a == b { 1 } else { 2 })
+        .sum();
+
+    let mut out = String::from(
+        "// Generated by QuickAccent — do not edit (regenerated at startup).\n\
+         // Maps accent characters onto spare keycodes so they can be typed\n\
+         // directly. Enabled through the xkb option 'quickaccent:accents'.\n\
+         partial modifier_keys\n\
+         xkb_symbols \"accents\" {\n\
+         \x20   key <FK24> { type[Group1]=\"ONE_LEVEL\", symbols[Group1]=[ ISO_Level3_Shift ] };\n\
+         \x20   modifier_map Mod5 { <FK24> };\n",
+    );
+    for (i, chunk) in pairs[..pairs.len() - overflow_pairs].chunks(2).enumerate() {
+        let (name, _) = SLOT_KEYS[i];
+        let (l1, u1) = chunk[0];
+        let (l2, u2) = chunk.get(1).copied().unwrap_or(chunk[0]);
+        out.push_str(&format!(
+            "    key <{name}> {{ type[Group1]=\"FOUR_LEVEL\", symbols[Group1]=[ {}, {}, {}, {} ] }};\n",
+            keysym_name(l1),
+            keysym_name(u1),
+            keysym_name(l2),
+            keysym_name(u2),
+        ));
+    }
+    out.push_str("};\n");
+    (out, overflow)
+}
+
+/// Deterministic (lowercase, uppercase) pairs; caseless chars pair with
+/// themselves.
+fn case_pairs(chars: &[char]) -> Vec<(char, char)> {
+    let set: std::collections::BTreeSet<char> = chars.iter().copied().collect();
+    let mut used: std::collections::BTreeSet<char> = std::collections::BTreeSet::new();
+    let mut pairs = Vec::new();
+    for &c in &set {
+        if used.contains(&c) {
+            continue;
+        }
+        let upper = c.to_uppercase().next().unwrap_or(c);
+        if c.is_lowercase() && upper != c && set.contains(&upper) {
+            pairs.push((c, upper));
+            used.insert(c);
+            used.insert(upper);
+        } else if c.is_uppercase() {
+            let lower = c.to_lowercase().next().unwrap_or(c);
+            if set.contains(&lower) {
+                continue; // handled from the lowercase side
+            }
+            pairs.push((c, c));
+            used.insert(c);
+        } else {
+            pairs.push((c, upper));
+            used.insert(c);
+            used.insert(upper);
+        }
+    }
+    pairs
+}
+
+fn keysym_name(c: char) -> String {
+    format!("U{:04X}", c as u32)
+}
+
+/// Make sure ~/.config/xkb/rules/evdev maps our option and still includes
+/// the system rules. Our mapping must come AFTER the include: rule clauses
+/// contribute symbols in file order, and a section merged later overrides
+/// earlier ones — otherwise inet(evdev)'s XF86 media symbols on <FK13>+
+/// clobber our characters.
+fn ensure_rules() -> std::io::Result<()> {
+    let path = xkb_dir().join("rules").join("evdev");
+    let our_block =
+        format!("! option\t=\tsymbols\n  {OPTION_NAME}\t=\t+quickaccent(accents)\n");
+    match std::fs::read_to_string(&path) {
+        Ok(existing) if existing.contains(OPTION_NAME) => Ok(()),
+        Ok(existing) => write_file(&path, &format!("{existing}\n{our_block}")),
+        Err(_) => write_file(&path, &format!("! include %S/evdev\n\n{our_block}")),
+    }
+}
+
+/// Add our option to GNOME's xkb-options. Returns Some(true) if present or
+/// added, Some(false) on failure, None when gsettings isn't available (not
+/// GNOME). `force_reload` re-applies the option so mutter recompiles the
+/// keymap after the symbols file changed.
+fn ensure_gnome_option(force_reload: bool) -> Option<bool> {
+    let current = gsettings_get_options()?;
+    let has_option = current.iter().any(|o| o == OPTION_NAME);
+    if has_option && !force_reload {
+        return Some(true);
+    }
+    if has_option && force_reload {
+        // Toggle off/on: gsettings only signals on value change, and mutter
+        // only recompiles on signal.
+        let without: Vec<String> = current
+            .iter()
+            .filter(|o| o.as_str() != OPTION_NAME)
+            .cloned()
+            .collect();
+        if !gsettings_set_options(&without) {
+            return Some(false);
+        }
+    }
+    let mut with: Vec<String> = current
+        .iter()
+        .filter(|o| o.as_str() != OPTION_NAME)
+        .cloned()
+        .collect();
+    with.push(OPTION_NAME.to_string());
+    Some(gsettings_set_options(&with))
+}
+
+pub(crate) fn gsettings_get_options() -> Option<Vec<String>> {
+    let out = std::process::Command::new("gsettings")
+        .args(["get", "org.gnome.desktop.input-sources", "xkb-options"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    Some(parse_gvariant_string_list(&String::from_utf8_lossy(
+        &out.stdout,
+    )))
+}
+
+fn gsettings_set_options(options: &[String]) -> bool {
+    let value = format!(
+        "[{}]",
+        options
+            .iter()
+            .map(|o| format!("'{o}'"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    std::process::Command::new("gsettings")
+        .args(["set", "org.gnome.desktop.input-sources", "xkb-options"])
+        .arg(&value)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Parse a GVariant `as` value: `['a', 'b']` or `@as []`.
+fn parse_gvariant_string_list(text: &str) -> Vec<String> {
+    text.split('\'')
+        .skip(1)
+        .step_by(2)
+        .map(str::to_string)
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn case_pairs_pairs_and_orders() {
+        let pairs = case_pairs(&['é', 'É', 'ç', 'Ç', 'ß']);
+        assert!(pairs.contains(&('ç', 'Ç')));
+        assert!(pairs.contains(&('é', 'É')));
+        assert!(pairs.contains(&('ß', 'ẞ')) || pairs.contains(&('ß', 'ß')) || pairs.contains(&('ß', 'S')));
+        // Deterministic: same input, same output.
+        assert_eq!(pairs, case_pairs(&['ß', 'Ç', 'É', 'ç', 'é']));
+    }
+
+    #[test]
+    fn generate_symbols_emits_unicode_keysyms() {
+        let (s, overflow) = generate_symbols(&['é', 'É', 'à', 'À']);
+        assert_eq!(overflow, 0);
+        assert!(s.contains("ISO_Level3_Shift"));
+        assert!(s.contains("U00E9"));
+        assert!(s.contains("U00C9"));
+        // à/À and é/É pack onto one FOUR_LEVEL key.
+        assert!(s.contains("[ U00E0, U00C0, U00E9, U00C9 ]"));
+    }
+
+    #[test]
+    fn parse_gvariant_lists() {
+        assert_eq!(
+            parse_gvariant_string_list("['caps:escape', 'lv3:ralt']"),
+            vec!["caps:escape", "lv3:ralt"]
+        );
+        assert!(parse_gvariant_string_list("@as []").is_empty());
+    }
+
+    #[test]
+    fn generated_option_compiles_and_maps_chars() {
+        // End-to-end through libxkbcommon, the same library mutter uses:
+        // write the files into a temp XDG_CONFIG_HOME, compile us+our option,
+        // and check the characters landed on the expected keycodes.
+        let tmp = std::env::temp_dir().join(format!("qa-xkb-test-{}", std::process::id()));
+        let missing: Vec<char> = "àâäéèêëÀÂÄÉÈÊË".chars().collect();
+        let (symbols, overflow) = generate_symbols(&missing);
+        assert_eq!(overflow, 0);
+        std::fs::create_dir_all(tmp.join("xkb/symbols")).unwrap();
+        std::fs::create_dir_all(tmp.join("xkb/rules")).unwrap();
+        std::fs::write(tmp.join("xkb/symbols/quickaccent"), &symbols).unwrap();
+        std::fs::write(
+            tmp.join("xkb/rules/evdev"),
+            format!("! include %S/evdev\n\n! option\t=\tsymbols\n  {OPTION_NAME}\t=\t+quickaccent(accents)\n"),
+        )
+        .unwrap();
+
+        let tmp2 = tmp.clone();
+        // Context reads XDG_CONFIG_HOME at creation; isolate in a thread.
+        std::thread::spawn(move || {
+            std::env::set_var("XDG_CONFIG_HOME", &tmp2);
+            use xkbcommon::xkb;
+            let ctx = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+            let keymap = xkb::Keymap::new_from_names(
+                &ctx,
+                "",
+                "",
+                "us",
+                "",
+                Some(OPTION_NAME.to_string()),
+                xkb::KEYMAP_COMPILE_NO_FLAGS,
+            )
+            .expect("keymap with quickaccent option");
+            // é must now exist somewhere on our slot keys.
+            let mut found = false;
+            keymap.key_for_each(|km, keycode| {
+                for level in 0..km.num_levels_for_key(keycode, 0).min(4) {
+                    for sym in km.key_get_syms_by_level(keycode, 0, level) {
+                        if xkb::keysym_to_utf32(*sym) == 'é' as u32 {
+                            found = true;
+                            let code = keycode.raw() - 8;
+                            assert!(
+                                SLOT_KEYS.iter().any(|(_, c)| u32::from(*c) == code),
+                                "é on unexpected keycode {code}"
+                            );
+                        }
+                    }
+                }
+            });
+            assert!(found, "é not found in compiled keymap");
+        })
+        .join()
+        .expect("xkb compile thread");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+}

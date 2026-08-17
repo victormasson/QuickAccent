@@ -9,7 +9,7 @@ Type=simple
 ExecStart=%h/.local/bin/quickaccent
 Restart=on-failure
 RestartSec=2
-# Useful when debugging: Environment=RUST_LOG=debug
+Environment=PATH=/usr/bin:/usr/local/bin:%h/.local/bin
 
 [Install]
 WantedBy=graphical-session.target

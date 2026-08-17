@@ -21,6 +21,27 @@ pub fn reload(languages: &[String]) {
     *COMPILED_MAP.write().unwrap() = Some(map);
 }
 
+/// Every character any current mapping can produce, both cases (used to
+/// decide at startup whether direct-injection tiers beyond the keymap are
+/// needed).
+#[cfg(target_os = "linux")]
+pub fn all_variant_chars() -> Vec<char> {
+    let guard = COMPILED_MAP.read().unwrap();
+    let Some(map) = guard.as_ref() else {
+        return Vec::new();
+    };
+    let mut out: Vec<char> = Vec::new();
+    for chars in map.values() {
+        for s in chars {
+            out.extend(s.chars());
+            out.extend(s.chars().flat_map(|c| c.to_uppercase()));
+        }
+    }
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
 pub fn get_variants(key: MappingKey, uppercase: bool) -> Vec<String> {
     let guard = COMPILED_MAP.read().unwrap();
     let map = guard.as_ref().expect("mappings not initialized");

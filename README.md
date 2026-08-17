@@ -6,10 +6,14 @@ Hold a letter → Space → pick an accent → release to insert.
 
 ## How it works
 
-1. Hold a letter (e.g. `e`)
+1. Hold a letter (e.g. `e`) — like on macOS, the letter is held back, nothing
+   is typed yet
 2. Press `Space` — overlay shows variants (`é è ê ë`…)
-3. `Space` / arrows cycle; release the letter to insert
-4. `Escape` cancels
+3. `Space` / arrows cycle; release the letter to insert the accent directly
+4. `Escape` cancels and types the plain letter
+
+Just tapping a letter types it normally (it appears on key release); accented
+letters don't auto-repeat while held, exactly like macOS press-and-hold.
 
 ## Install
 
@@ -17,27 +21,39 @@ Prebuilt binaries are published on every `master` push to the rolling
 [`continuous` release](https://github.com/victormasson/QuickAccent/releases/tag/continuous).
 Use that to avoid compiling on the laptop.
 
-### Linux Wayland (GNOME, Fedora) — prebuilt, no Rust
+### Linux (Wayland or X11; GNOME tested) — prebuilt, no Rust
 
 ```bash
-# clipboard fallback for accents not on the current keymap
-sudo dnf install -y wl-clipboard   # Debian/Ubuntu: sudo apt install wl-clipboard
-
 curl -fsSL https://raw.githubusercontent.com/victormasson/QuickAccent/master/dist/linux/install.sh | bash
+sudo reboot
 ```
 
 The script downloads `quickaccent-linux-x86_64.tar.gz` from the
 [`continuous`](https://github.com/victormasson/QuickAccent/releases/tag/continuous)
-release, installs `~/.local/bin/quickaccent`, a systemd user unit, the udev
-rule, and adds you to group `input`.
+release and sets everything up:
 
-Then:
+- `~/.local/bin/quickaccent` + a systemd user unit (starts with your session)
+- udev rule for `/dev/input` + `/dev/uinput`, loads the `uinput` module at boot
+- adds you to group `input`
 
-1. **Reboot** (a GNOME logout is not enough — `systemd --user` keeps the old groups).
-2. Approve the GNOME **Remote Desktop / input** portal when prompted.
-3. Hold `e` → Space → release.
+The **reboot** is required once so `systemd --user` picks up the new group
+(a GNOME logout is not enough).
 
-`input` can read all keyboards — trusted users only.  
+That's it — no permission prompt, no clipboard tricks. Accents are typed as
+real keystrokes in every app (terminals included): characters your keyboard
+layout lacks (é on US, É on AZERTY…) are added to the keymap automatically at
+startup (xkb option `quickaccent:accents` in `~/.config/xkb`, your other xkb
+options are preserved).
+
+Notes:
+
+- `input` group members can read all keyboards — trusted users only.
+- Optional: `wl-clipboard` enables the emergency paste fallback on non-GNOME
+  desktops.
+- Uninstall / undo the keymap extension: remove `quickaccent:accents` from
+  `gsettings get org.gnome.desktop.input-sources xkb-options`, delete
+  `~/.config/xkb/symbols/quickaccent`, and `systemctl --user disable --now quickaccent`.
+
 Details: [dist/linux/README.md](dist/linux/README.md).
 
 ### macOS (universal, no Rust)
@@ -90,10 +106,9 @@ RUST_LOG=debug quickaccent
 journalctl --user -u quickaccent -f
 ```
 
-Runs as a background daemon. On Linux Wayland the overlay is centered (compositors block caret-relative placement).
-
-If inject fails on GNOME Wayland, install `wl-clipboard` — accents not on the
-keymap are pasted via `wl-copy` + Ctrl+V.
+Runs as a background daemon. On Linux the overlay is centered (Wayland
+compositors block caret-relative placement) and rendered through XWayland so
+it never steals keyboard focus from the app you're typing in.
 
 ## CI / releases
 
@@ -110,10 +125,14 @@ Desktop grab/inject: [docs/MANUAL_TEST.md](docs/MANUAL_TEST.md).
 ## Stack
 
 - [iced](https://github.com/iced-rs/iced) — overlay
-- CoreGraphics (macOS) / rdev (Linux) — grab
-- [enigo](https://github.com/enigo-rs/enigo) — inject (VK / libei / X11)
-- `wl-copy` (Linux Wayland) — fallback when the keymap has no accent key
-- xkbcommon (Linux) — layout-aware accents
+- CoreGraphics (macOS) / rdev, vendored with a hotplug-grab fix (Linux) — grab
+- uinput virtual keyboard (Linux) — all injection; accents the layout lacks
+  are added to the keymap via a generated xkb option (`~/.config/xkb`)
+- XDG RemoteDesktop portal keysym (Linux, non-GNOME fallback) — one-time
+  authorization, persisted via restore token
+- [enigo](https://github.com/enigo-rs/enigo) (macOS) — inject
+- `wl-copy` (Linux) — emergency fallback only
+- xkbcommon (Linux) — layout-aware accents + char→keycode lookup
 
 ## License
 

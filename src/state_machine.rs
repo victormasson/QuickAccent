@@ -16,21 +16,89 @@ pub enum KeyInput {
     Other,
 }
 
+/// A key event for the virtual keyboard (evdev KEY_* code, no +8 XKB offset).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyEvt {
+    Press(u16),
+    Release(u16),
+}
+
+impl KeyEvt {
+    pub fn code(self) -> u16 {
+        match self {
+            KeyEvt::Press(c) | KeyEvt::Release(c) => c,
+        }
+    }
+
+    pub fn value(self) -> i32 {
+        match self {
+            KeyEvt::Press(_) => 1,
+            KeyEvt::Release(_) => 0,
+        }
+    }
+}
+
+/// What to do when the physical release of a deferred-replayed key arrives.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReleaseAction {
+    /// The virtual release was already emitted — just swallow the physical one.
+    SwallowOnly,
+    /// Only the virtual press was emitted — emit the matching virtual release.
+    EmitVirtualRelease,
+}
+
+/// Result of a deferred-mode transition. Pure data so it's unit-testable.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Action {
+    /// Swallow the physical event (don't let rdev re-emit it).
+    pub suppress: bool,
+    /// Events to replay through the virtual keyboard, in order.
+    pub emit: Vec<KeyEvt>,
+    /// Physical releases to intercept later (registered by the grab thread).
+    pub pending: Vec<(u16, ReleaseAction)>,
+    /// UI event to forward to the overlay.
+    pub ui: Option<GrabEvent>,
+    /// Accent character to inject (commit).
+    pub inject: Option<String>,
+}
+
+impl Action {
+    fn pass() -> Self {
+        Action::default()
+    }
+
+    fn swallow() -> Self {
+        Action {
+            suppress: true,
+            ..Action::default()
+        }
+    }
+}
+
+const KEY_LEFTSHIFT: u16 = 42;
+
 #[derive(Clone)]
 pub enum AccentState {
     Idle,
     /// Brief cooldown after accent injection — behaves like Idle but won't
     /// enter LetterHeld, so the next letter+space is normal typing.
+    /// (macOS path only; the deferred Linux path doesn't need it.)
     Cooldown {
         until: Instant,
     },
     LetterHeld {
         key: MappingKey,
+        /// evdev code of the physical key (deferred mode; 0 on macOS)
+        code: u16,
+        /// shift state when the key was pressed (deferred mode)
+        shift_at_press: bool,
         variants: Vec<String>,
         held_since: Instant,
     },
     Selecting {
         key: MappingKey,
+        /// evdev code of the physical key (deferred mode; 0 on macOS)
+        code: u16,
         variants: Vec<String>,
         selected_index: usize,
         held_since: Instant,
@@ -50,6 +118,9 @@ pub enum GrabEvent {
 /// Wraps AccentState with config-derived settings.
 pub struct StateMachine {
     pub state: AccentState,
+    /// macOS path only — deferred mode types nothing up front, so the
+    /// "released too quickly to be intentional" check has no purpose there.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub input_time: Duration,
     pub hold_delay: Duration,
     pub activation_key: ActivationKey,
@@ -78,17 +149,23 @@ impl StateMachine {
         }
     }
 
-    fn try_enter_letter_held(&mut self, mk: MappingKey, shift_held: bool) {
+    fn try_enter_letter_held(&mut self, mk: MappingKey, code: u16, shift_held: bool) -> bool {
         let variants = crate::mappings::get_variants(mk, shift_held);
         if !variants.is_empty() {
             self.state = AccentState::LetterHeld {
                 key: mk,
+                code,
+                shift_at_press: shift_held,
                 variants,
                 held_since: Instant::now(),
             };
+            true
+        } else {
+            false
         }
     }
 
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub fn handle_key_press(
         &mut self,
         input: KeyInput,
@@ -97,7 +174,7 @@ impl StateMachine {
         match &self.state {
             AccentState::Idle => {
                 if let KeyInput::Letter(mk) = input {
-                    self.try_enter_letter_held(mk, shift_held);
+                    self.try_enter_letter_held(mk, 0, shift_held);
                 }
                 (false, None)
             }
@@ -106,7 +183,7 @@ impl StateMachine {
                     // Cooldown expired → act like Idle
                     self.state = AccentState::Idle;
                     if let KeyInput::Letter(mk) = input {
-                        self.try_enter_letter_held(mk, shift_held);
+                        self.try_enter_letter_held(mk, 0, shift_held);
                     }
                 }
                 // During cooldown, pass everything through
@@ -114,8 +191,10 @@ impl StateMachine {
             }
             AccentState::LetterHeld {
                 key,
+                code,
                 variants,
                 held_since,
+                ..
             } => {
                 if self.is_trigger(input) {
                     if held_since.elapsed() < self.hold_delay {
@@ -124,9 +203,11 @@ impl StateMachine {
                     } else {
                         let variants = variants.clone();
                         let held_key = *key;
+                        let held_code = *code;
                         let held_since = *held_since;
                         self.state = AccentState::Selecting {
                             key: held_key,
+                            code: held_code,
                             variants: variants.clone(),
                             selected_index: 0,
                             held_since,
@@ -184,6 +265,7 @@ impl StateMachine {
         }
     }
 
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub fn handle_key_release(&mut self, input: KeyInput) -> (bool, Option<GrabEvent>) {
         match &self.state {
             AccentState::LetterHeld { key, .. } => {
@@ -223,6 +305,214 @@ impl StateMachine {
         }
     }
 
+    /// Deferred-mode key press (Linux). The letter is *suppressed* on keydown
+    /// and replayed through the virtual keyboard when the user's intent is
+    /// known — so it never reaches the app before an accent choice is made.
+    ///
+    /// `code`: evdev code of the physical key (None = unmappable, can't replay).
+    /// `mods_held`: Ctrl/Alt/AltGr/Super held (shortcut chords bypass accents).
+    pub fn deferred_press(
+        &mut self,
+        input: KeyInput,
+        code: Option<u16>,
+        shift_held: bool,
+        mods_held: bool,
+    ) -> Action {
+        match &self.state {
+            AccentState::Idle | AccentState::Cooldown { .. } => {
+                if let (KeyInput::Letter(mk), Some(c), false) = (input, code, mods_held) {
+                    if self.try_enter_letter_held(mk, c, shift_held) {
+                        return Action::swallow();
+                    }
+                }
+                Action::pass()
+            }
+            AccentState::LetterHeld {
+                code: held,
+                shift_at_press,
+                variants,
+                held_since,
+                ..
+            } => {
+                let held = *held;
+                let shift_at_press = *shift_at_press;
+                if code == Some(held) {
+                    // Kernel autorepeat of the held letter — it must not type.
+                    return Action::swallow();
+                }
+                if self.is_trigger(input) {
+                    if held_since.elapsed() >= self.hold_delay {
+                        let variants = variants.clone();
+                        if let AccentState::LetterHeld {
+                            key,
+                            code,
+                            variants,
+                            held_since,
+                            ..
+                        } = std::mem::replace(&mut self.state, AccentState::Idle)
+                        {
+                            self.state = AccentState::Selecting {
+                                key,
+                                code,
+                                variants,
+                                selected_index: 0,
+                                held_since,
+                            };
+                        }
+                        return Action {
+                            suppress: true,
+                            ui: Some(GrabEvent::ShowOverlay { variants, index: 0 }),
+                            ..Action::default()
+                        };
+                    }
+                    // Fast "e␣" typing: replay letter, then the trigger itself.
+                    self.state = AccentState::Idle;
+                    let mut action = Action::swallow();
+                    action.emit = Self::replay_letter(held, shift_at_press, shift_held);
+                    action.pending.push((held, ReleaseAction::SwallowOnly));
+                    if let Some(t) = code {
+                        action.emit.push(KeyEvt::Press(t));
+                        action.pending.push((t, ReleaseAction::EmitVirtualRelease));
+                    } else {
+                        action.suppress = false; // can't replay it — let it through
+                    }
+                    return action;
+                }
+                // Rollover: another key pressed while the letter is deferred.
+                // Replay the letter first, then route the new key through the
+                // same (virtual) device so their order is preserved.
+                self.state = AccentState::Idle;
+                let mut action = Action::swallow();
+                action.emit = Self::replay_letter(held, shift_at_press, shift_held);
+                action.pending.push((held, ReleaseAction::SwallowOnly));
+                if let (KeyInput::Letter(mk), Some(c), false) = (input, code, mods_held) {
+                    if self.try_enter_letter_held(mk, c, shift_held) {
+                        // The new key is itself accent-capable → defer it too.
+                        return action;
+                    }
+                }
+                if let Some(c) = code {
+                    action.emit.push(KeyEvt::Press(c));
+                    action.pending.push((c, ReleaseAction::EmitVirtualRelease));
+                } else {
+                    action.suppress = false; // unmappable key — let it through
+                }
+                action
+            }
+            AccentState::Selecting {
+                code: held,
+                variants,
+                selected_index,
+                ..
+            } => {
+                let held = *held;
+                let len = variants.len();
+                let idx = *selected_index;
+                match input {
+                    KeyInput::Space | KeyInput::RightArrow => {
+                        let new_index = (idx + 1) % len;
+                        self.set_selected(new_index);
+                        Action {
+                            suppress: true,
+                            ui: Some(GrabEvent::UpdateSelection(new_index)),
+                            ..Action::default()
+                        }
+                    }
+                    KeyInput::LeftArrow => {
+                        let new_index = (idx + len - 1) % len;
+                        self.set_selected(new_index);
+                        Action {
+                            suppress: true,
+                            ui: Some(GrabEvent::UpdateSelection(new_index)),
+                            ..Action::default()
+                        }
+                    }
+                    KeyInput::Escape => {
+                        // Cancel: the user still typed the letter — replay it
+                        // plain (it's the only way to get the base letter).
+                        self.state = AccentState::Idle;
+                        Action {
+                            suppress: true,
+                            emit: vec![KeyEvt::Press(held), KeyEvt::Release(held)],
+                            pending: vec![(held, ReleaseAction::SwallowOnly)],
+                            ui: Some(GrabEvent::HideOverlay),
+                            ..Action::default()
+                        }
+                    }
+                    // Overlay is modal: swallow everything else (incl. repeats
+                    // of the held letter).
+                    _ => Action::swallow(),
+                }
+            }
+        }
+    }
+
+    /// Deferred-mode key release (Linux). The grab thread intercepts releases
+    /// registered via `Action::pending` *before* calling this.
+    pub fn deferred_release(&mut self, code: Option<u16>, shift_held: bool) -> Action {
+        match &self.state {
+            AccentState::LetterHeld {
+                code: held,
+                shift_at_press,
+                ..
+            } => {
+                let (held, shift_at_press) = (*held, *shift_at_press);
+                if code == Some(held) {
+                    // Normal typing: the letter appears on key release.
+                    self.state = AccentState::Idle;
+                    return Action {
+                        suppress: true,
+                        emit: Self::replay_letter(held, shift_at_press, shift_held),
+                        ..Action::default()
+                    };
+                }
+                Action::pass()
+            }
+            AccentState::Selecting {
+                code: held,
+                variants,
+                selected_index,
+                ..
+            } => {
+                if code == Some(*held) {
+                    // Commit: inject the selected variant. Nothing to delete —
+                    // the letter was never typed.
+                    let selected = variants[*selected_index].clone();
+                    self.state = AccentState::Idle;
+                    return Action {
+                        suppress: true,
+                        ui: Some(GrabEvent::InjectChar(selected.clone())),
+                        inject: Some(selected),
+                        ..Action::default()
+                    };
+                }
+                Action::pass()
+            }
+            _ => Action::pass(),
+        }
+    }
+
+    /// Replay a deferred letter press+release; if Shift was down at press time
+    /// but has been released since (sloppy capitals), wrap it in Shift.
+    fn replay_letter(code: u16, shift_at_press: bool, shift_now: bool) -> Vec<KeyEvt> {
+        if shift_at_press && !shift_now {
+            vec![
+                KeyEvt::Press(KEY_LEFTSHIFT),
+                KeyEvt::Press(code),
+                KeyEvt::Release(code),
+                KeyEvt::Release(KEY_LEFTSHIFT),
+            ]
+        } else {
+            vec![KeyEvt::Press(code), KeyEvt::Release(code)]
+        }
+    }
+
+    fn set_selected(&mut self, new_index: usize) {
+        if let AccentState::Selecting { selected_index, .. } = &mut self.state {
+            *selected_index = new_index;
+        }
+    }
+
     /// Called when shift state changes. If in Selecting, refreshes variants.
     pub fn update_shift(&mut self, shift_held: bool) -> Option<GrabEvent> {
         if let AccentState::Selecting {
@@ -248,6 +538,7 @@ impl StateMachine {
     }
 
     /// Peek at the currently held key (if in LetterHeld state).
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub fn held_key(&self) -> Option<MappingKey> {
         match &self.state {
             AccentState::LetterHeld { key, .. } => Some(*key),
@@ -256,6 +547,7 @@ impl StateMachine {
     }
 
     /// Force reset to Idle (used when physical key verification fails).
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub fn force_reset(&mut self) {
         self.state = AccentState::Idle;
     }
@@ -619,6 +911,243 @@ mod tests {
         let (s, ev) = sm.handle_key_press(KeyInput::Other, false);
         assert!(s);
         assert!(ev.is_none());
+        assert!(sm.is_selecting());
+    }
+
+    // ---- Deferred mode (Linux) ----
+
+    const E: u16 = 18; // KEY_E
+    const A: u16 = 30; // KEY_A
+    const SPACE: u16 = 57; // KEY_SPACE
+    const COMMA: u16 = 51; // KEY_COMMA
+    const SHIFT: u16 = KEY_LEFTSHIFT;
+
+    fn deferred_press_e(sm: &mut StateMachine) {
+        let a = sm.deferred_press(KeyInput::Letter(MappingKey::E), Some(E), false, false);
+        assert!(a.suppress);
+        assert!(a.emit.is_empty());
+        assert!(a.pending.is_empty());
+        assert!(a.ui.is_none());
+        assert!(sm.is_letter_held());
+    }
+
+    fn deferred_open_overlay(sm: &mut StateMachine) -> Vec<String> {
+        deferred_press_e(sm);
+        sm.set_held_ago(Duration::from_millis(300));
+        let a = sm.deferred_press(KeyInput::Space, Some(SPACE), false, false);
+        assert!(a.suppress);
+        assert!(a.emit.is_empty());
+        assert!(sm.is_selecting());
+        match a.ui {
+            Some(GrabEvent::ShowOverlay { variants, index }) => {
+                assert_eq!(index, 0);
+                assert!(!variants.is_empty());
+                variants
+            }
+            other => panic!("expected ShowOverlay, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn deferred_letter_is_suppressed_on_press() {
+        setup();
+        let mut sm = sm(ActivationKey::Both);
+        deferred_press_e(&mut sm);
+    }
+
+    #[test]
+    fn deferred_letter_with_mods_passes_through() {
+        setup();
+        let mut sm = sm(ActivationKey::Both);
+        let a = sm.deferred_press(KeyInput::Letter(MappingKey::E), Some(E), false, true);
+        assert_eq!(a, Action::pass());
+        assert!(sm.is_idle());
+    }
+
+    #[test]
+    fn deferred_unmappable_letter_passes_through() {
+        setup();
+        let mut sm = sm(ActivationKey::Both);
+        let a = sm.deferred_press(KeyInput::Letter(MappingKey::E), None, false, false);
+        assert_eq!(a, Action::pass());
+        assert!(sm.is_idle());
+    }
+
+    #[test]
+    fn deferred_release_replays_letter() {
+        setup();
+        let mut sm = sm(ActivationKey::Both);
+        deferred_press_e(&mut sm);
+        let a = sm.deferred_release(Some(E), false);
+        assert!(a.suppress);
+        assert_eq!(a.emit, vec![KeyEvt::Press(E), KeyEvt::Release(E)]);
+        assert!(a.pending.is_empty());
+        assert!(sm.is_idle());
+    }
+
+    #[test]
+    fn deferred_release_wraps_shift_if_dropped() {
+        setup();
+        let mut sm = sm(ActivationKey::Both);
+        let a = sm.deferred_press(KeyInput::Letter(MappingKey::E), Some(E), true, false);
+        assert!(a.suppress);
+        // Shift released before the letter: replay must still produce a capital.
+        let a = sm.deferred_release(Some(E), false);
+        assert_eq!(
+            a.emit,
+            vec![
+                KeyEvt::Press(SHIFT),
+                KeyEvt::Press(E),
+                KeyEvt::Release(E),
+                KeyEvt::Release(SHIFT),
+            ]
+        );
+    }
+
+    #[test]
+    fn deferred_autorepeat_is_swallowed() {
+        setup();
+        let mut sm = sm(ActivationKey::Both);
+        deferred_press_e(&mut sm);
+        let a = sm.deferred_press(KeyInput::Letter(MappingKey::E), Some(E), false, false);
+        assert!(a.suppress);
+        assert!(a.emit.is_empty());
+        assert!(sm.is_letter_held());
+    }
+
+    #[test]
+    fn deferred_trigger_after_hold_opens_overlay() {
+        setup();
+        let mut sm = sm(ActivationKey::Both);
+        deferred_open_overlay(&mut sm);
+    }
+
+    #[test]
+    fn deferred_fast_trigger_replays_letter_and_trigger() {
+        setup();
+        let mut sm = sm(ActivationKey::Both);
+        deferred_press_e(&mut sm);
+        // Space right away (< hold_delay): normal "e " typing.
+        let a = sm.deferred_press(KeyInput::Space, Some(SPACE), false, false);
+        assert!(a.suppress);
+        assert_eq!(
+            a.emit,
+            vec![KeyEvt::Press(E), KeyEvt::Release(E), KeyEvt::Press(SPACE)]
+        );
+        assert_eq!(
+            a.pending,
+            vec![
+                (E, ReleaseAction::SwallowOnly),
+                (SPACE, ReleaseAction::EmitVirtualRelease),
+            ]
+        );
+        assert!(sm.is_idle());
+    }
+
+    #[test]
+    fn deferred_rollover_replays_letter_then_new_key() {
+        setup();
+        let mut sm = sm(ActivationKey::Both);
+        deferred_press_e(&mut sm);
+        let a = sm.deferred_press(KeyInput::Other, Some(COMMA), false, false);
+        assert!(a.suppress);
+        assert_eq!(
+            a.emit,
+            vec![KeyEvt::Press(E), KeyEvt::Release(E), KeyEvt::Press(COMMA)]
+        );
+        assert_eq!(
+            a.pending,
+            vec![
+                (E, ReleaseAction::SwallowOnly),
+                (COMMA, ReleaseAction::EmitVirtualRelease),
+            ]
+        );
+        assert!(sm.is_idle());
+    }
+
+    #[test]
+    fn deferred_rollover_chains_to_next_letter() {
+        setup();
+        let mut sm = sm(ActivationKey::Both);
+        deferred_press_e(&mut sm);
+        let a = sm.deferred_press(KeyInput::Letter(MappingKey::A), Some(A), false, false);
+        assert!(a.suppress);
+        // e is replayed, a becomes the new deferred letter.
+        assert_eq!(a.emit, vec![KeyEvt::Press(E), KeyEvt::Release(E)]);
+        assert_eq!(a.pending, vec![(E, ReleaseAction::SwallowOnly)]);
+        assert!(sm.is_letter_held());
+        assert_eq!(sm.held_key(), Some(MappingKey::A));
+    }
+
+    #[test]
+    fn deferred_rollover_unmappable_key_passes_through() {
+        setup();
+        let mut sm = sm(ActivationKey::Both);
+        deferred_press_e(&mut sm);
+        let a = sm.deferred_press(KeyInput::Other, None, false, false);
+        // Letter still replayed, but the unknown key can't ride the virtual
+        // device — it passes through on its own device.
+        assert!(!a.suppress);
+        assert_eq!(a.emit, vec![KeyEvt::Press(E), KeyEvt::Release(E)]);
+        assert_eq!(a.pending, vec![(E, ReleaseAction::SwallowOnly)]);
+        assert!(sm.is_idle());
+    }
+
+    #[test]
+    fn deferred_selecting_cycles_with_wrap() {
+        setup();
+        let mut sm = sm(ActivationKey::Both);
+        let variants = deferred_open_overlay(&mut sm);
+        let n = variants.len();
+
+        let a = sm.deferred_press(KeyInput::Space, Some(SPACE), false, false);
+        assert!(a.suppress);
+        assert_eq!(a.ui, Some(GrabEvent::UpdateSelection(1 % n)));
+
+        let a = sm.deferred_press(KeyInput::LeftArrow, Some(105), false, false);
+        assert!(a.suppress);
+        assert_eq!(a.ui, Some(GrabEvent::UpdateSelection(0)));
+    }
+
+    #[test]
+    fn deferred_escape_replays_plain_letter() {
+        setup();
+        let mut sm = sm(ActivationKey::Both);
+        deferred_open_overlay(&mut sm);
+        let a = sm.deferred_press(KeyInput::Escape, Some(1), false, false);
+        assert!(a.suppress);
+        assert_eq!(a.emit, vec![KeyEvt::Press(E), KeyEvt::Release(E)]);
+        assert_eq!(a.pending, vec![(E, ReleaseAction::SwallowOnly)]);
+        assert_eq!(a.ui, Some(GrabEvent::HideOverlay));
+        assert!(sm.is_idle());
+    }
+
+    #[test]
+    fn deferred_commit_injects_without_cooldown() {
+        setup();
+        let mut sm = sm(ActivationKey::Both);
+        let variants = deferred_open_overlay(&mut sm);
+        let a = sm.deferred_release(Some(E), false);
+        assert!(a.suppress);
+        assert!(a.emit.is_empty()); // nothing to delete, nothing to replay
+        assert_eq!(a.inject, Some(variants[0].clone()));
+        assert_eq!(a.ui, Some(GrabEvent::InjectChar(variants[0].clone())));
+        assert!(sm.is_idle());
+    }
+
+    #[test]
+    fn deferred_selecting_swallows_unrelated_keys() {
+        setup();
+        let mut sm = sm(ActivationKey::Both);
+        deferred_open_overlay(&mut sm);
+        let a = sm.deferred_press(KeyInput::Other, Some(COMMA), false, false);
+        assert!(a.suppress);
+        assert!(a.emit.is_empty());
+        assert!(sm.is_selecting());
+
+        // Unrelated release passes through (e.g. a key pressed before us).
+        let a = sm.deferred_release(Some(COMMA), false);
+        assert_eq!(a, Action::pass());
         assert!(sm.is_selecting());
     }
 }

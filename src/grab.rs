@@ -260,8 +260,63 @@ mod platform {
 mod platform {
     use super::*;
     use crate::mappings::MappingKey;
+    use crate::state_machine::{Action, KeyEvt, ReleaseAction};
+    use crate::virtual_kb;
     use crate::xkb_map;
-    use rdev::{grab, Event, EventType, Key};
+    use rdev::{grab_with_is_repeat, Event, EventType, Key};
+    use std::collections::HashMap;
+
+    /// Physically held modifiers, tracked from the raw event stream.
+    #[derive(Default)]
+    struct Mods {
+        shift_l: bool,
+        shift_r: bool,
+        ctrl_l: bool,
+        ctrl_r: bool,
+        alt: bool,
+        altgr: bool,
+        meta_l: bool,
+        meta_r: bool,
+    }
+
+    impl Mods {
+        /// Update from a key event; returns true if it was a modifier.
+        fn update(&mut self, key: Key, pressed: bool) -> bool {
+            match key {
+                Key::ShiftLeft => self.shift_l = pressed,
+                Key::ShiftRight => self.shift_r = pressed,
+                Key::ControlLeft => self.ctrl_l = pressed,
+                Key::ControlRight => self.ctrl_r = pressed,
+                Key::Alt => self.alt = pressed,
+                Key::AltGr => self.altgr = pressed,
+                Key::MetaLeft => self.meta_l = pressed,
+                Key::MetaRight => self.meta_r = pressed,
+                _ => return false,
+            }
+            true
+        }
+
+        fn shift(&self) -> bool {
+            self.shift_l || self.shift_r
+        }
+
+        /// Any non-shift modifier held (shortcut chords bypass accents).
+        fn nonshift(&self) -> bool {
+            self.ctrl_l || self.ctrl_r || self.alt || self.altgr || self.meta_l || self.meta_r
+        }
+
+        /// evdev codes of the held Shift keys (for neutralization).
+        fn held_shift_codes(&self) -> Vec<u16> {
+            let mut v = Vec::new();
+            if self.shift_l {
+                v.push(42); // KEY_LEFTSHIFT
+            }
+            if self.shift_r {
+                v.push(54); // KEY_RIGHTSHIFT
+            }
+            v
+        }
+    }
 
     fn physical_letter(key: Key) -> Option<MappingKey> {
         match key {
@@ -316,70 +371,167 @@ mod platform {
         }
     }
 
-    fn dispatch(tx: &UnboundedSender<GrabEvent>, ge: GrabEvent) {
-        match &ge {
-            GrabEvent::InjectChar(ch) => injection::inject_char(ch.clone()),
-            GrabEvent::FalseStart => injection::inject_space(),
-            _ => {}
+    /// Type the committed accent character, most direct mechanism first:
+    /// 1. uinput key combo — char exists in the active keyboard layout;
+    /// 2. portal keysym — direct Unicode injection by the compositor
+    ///    (PowerAccent's SendInput(KEYEVENTF_UNICODE) equivalent);
+    /// 3. clipboard paste — emergency fallback only.
+    fn inject_commit(ch: &str, mods: &Mods) {
+        let held_shifts = mods.held_shift_codes();
+        let mut chars = ch.chars();
+        let single = match (chars.next(), chars.next()) {
+            (Some(c), None) => Some(c),
+            _ => None,
+        };
+        if let Some(combo) = single.and_then(xkb_map::combo_for_char) {
+            let altgr_code = if crate::xkb_custom::is_active() {
+                crate::xkb_custom::LEVEL3_CODE
+            } else {
+                virtual_kb::KEY_RIGHTALT
+            };
+            match virtual_kb::emit_combo(
+                combo.code,
+                combo.shift,
+                combo.altgr,
+                altgr_code,
+                &held_shifts,
+                mods.altgr,
+            ) {
+                Ok(()) => return,
+                Err(e) => eprintln!("[QuickAccent] direct injection failed: {e}"),
+            }
         }
-        let _ = tx.send(ge);
+        match crate::portal_keysym::inject_text_sync(ch) {
+            Ok(()) => return,
+            Err(crate::portal_keysym::InjectError::Timeout) => {
+                // The character may still arrive — injecting through another
+                // path too would double it. Do nothing.
+                eprintln!("[QuickAccent] portal injection timed out; not falling back");
+                return;
+            }
+            Err(crate::portal_keysym::InjectError::Unavailable(e)) => {
+                eprintln!("[QuickAccent] portal injection unavailable: {e}");
+            }
+        }
+        injection::inject_char_fallback(ch.to_string(), held_shifts);
     }
 
     pub fn run_grab(
         tx: UnboundedSender<GrabEvent>,
-        input_time_ms: u64,
+        _input_time_ms: u64,
         hold_delay_ms: u64,
         activation_key: ActivationKey,
     ) {
         let _ = xkb_map::logical_letter(MappingKey::A); // warm layout map
-        let state = RefCell::new(StateMachine::new(input_time_ms, hold_delay_ms, activation_key));
-        let shift_held = RefCell::new(false);
+        xkb_map::warm_combos(); // warm char→keycode map for commit injection
+        // input_time is a macOS-only knob (it existed to decide between
+        // replaying a swallowed space and deleting an already-typed letter;
+        // deferred mode types nothing up front, so there's nothing to undo).
+        let state = RefCell::new(StateMachine::new(0, hold_delay_ms, activation_key));
+        let mods = RefCell::new(Mods::default());
+        let pending_release: RefCell<HashMap<u16, ReleaseAction>> = RefCell::new(HashMap::new());
 
-        let callback = move |event: Event| -> Option<Event> {
-            match event.event_type {
-                EventType::KeyPress(Key::ShiftLeft | Key::ShiftRight) => {
-                    *shift_held.borrow_mut() = true;
-                    if let Some(ge) = state.borrow_mut().update_shift(true) {
-                        let _ = tx.send(ge);
-                    }
-                    Some(event)
-                }
-                EventType::KeyRelease(Key::ShiftLeft | Key::ShiftRight) => {
-                    *shift_held.borrow_mut() = false;
-                    if let Some(ge) = state.borrow_mut().update_shift(false) {
-                        let _ = tx.send(ge);
-                    }
-                    Some(event)
-                }
-                EventType::KeyPress(_) => {
-                    let (suppress, ge) = state
-                        .borrow_mut()
-                        .handle_key_press(event_to_input(&event), *shift_held.borrow());
-                    if let Some(ge) = ge {
-                        dispatch(&tx, ge);
-                    }
-                    if suppress {
-                        None
-                    } else {
-                        Some(event)
+        let callback = move |event: Event, is_repeat: bool| -> Option<Event> {
+            let (key, pressed) = match event.event_type {
+                EventType::KeyPress(k) => (k, true),
+                EventType::KeyRelease(k) => (k, false),
+                _ => return Some(event),
+            };
+            let code = xkb_map::evdev_code_of(key);
+
+            // 1. Our own injected events loop back through the grab: pass
+            // them through untouched (no state machine, no modifier update —
+            // virtual Shift taps must not corrupt physical tracking). We
+            // never inject autorepeat, so repeats skip this check — a repeat
+            // of a still-held physical key must not eat a registry entry.
+            if !is_repeat {
+                if let Some(c) = code {
+                    if virtual_kb::take_loopback(c, i32::from(pressed)) {
+                        return Some(event);
                     }
                 }
-                EventType::KeyRelease(_) => {
-                    let (suppress, ge) = state.borrow_mut().handle_key_release(event_to_input(&event));
-                    if let Some(ge) = ge {
-                        dispatch(&tx, ge);
-                    }
-                    if suppress {
-                        None
-                    } else {
-                        Some(event)
+            }
+
+            // Autorepeat of a key we already replayed virtually (still
+            // physically held): swallow. Apps synthesize their own repeats
+            // from key state, kernel repeat events are ignored downstream.
+            if is_repeat {
+                if let Some(c) = code {
+                    if pending_release.borrow().contains_key(&c) {
+                        return None;
                     }
                 }
-                _ => Some(event),
+            }
+
+            // Track physical modifier state for everything past the loopback
+            // filter (including intercepted releases below — a suppressed
+            // physical Ctrl-up must still clear the tracker).
+            let is_modifier = mods.borrow_mut().update(key, pressed);
+
+            // 2. Physical releases of keys we already replayed virtually.
+            if !pressed {
+                if let Some(c) = code {
+                    if let Some(ra) = pending_release.borrow_mut().remove(&c) {
+                        if ra == ReleaseAction::EmitVirtualRelease {
+                            if let Err(e) = virtual_kb::emit(&[KeyEvt::Release(c)]) {
+                                eprintln!("[QuickAccent] replay failed: {e}");
+                            }
+                        }
+                        return None;
+                    }
+                }
+            }
+
+            // 3. Shift passes through untouched (it drives live case
+            // switching in the overlay); other modifiers fall through to the
+            // state machine so a chord during LetterHeld replays the letter.
+            if matches!(key, Key::ShiftLeft | Key::ShiftRight) {
+                let shift = mods.borrow().shift();
+                if let Some(ge) = state.borrow_mut().update_shift(shift) {
+                    let _ = tx.send(ge);
+                }
+                return Some(event);
+            }
+
+            // 4. State machine (deferred mode).
+            let (shift, nonshift_mods, input) = {
+                let m = mods.borrow();
+                // A modifier's own keydown isn't "typed with a modifier held".
+                let nonshift = if is_modifier { false } else { m.nonshift() };
+                (m.shift(), nonshift, event_to_input(&event))
+            };
+            let action: Action = if pressed {
+                state
+                    .borrow_mut()
+                    .deferred_press(input, code, shift, nonshift_mods)
+            } else {
+                state.borrow_mut().deferred_release(code, shift)
+            };
+
+            // 5. Execute: replay first (ordering!), then bookkeeping, then
+            // commit injection, then UI.
+            if !action.emit.is_empty() {
+                if let Err(e) = virtual_kb::emit(&action.emit) {
+                    eprintln!("[QuickAccent] replay failed: {e}");
+                }
+            }
+            for (c, ra) in &action.pending {
+                pending_release.borrow_mut().insert(*c, *ra);
+            }
+            if let Some(ch) = &action.inject {
+                inject_commit(ch, &mods.borrow());
+            }
+            if let Some(ge) = action.ui {
+                let _ = tx.send(ge);
+            }
+            if action.suppress {
+                None
+            } else {
+                Some(event)
             }
         };
 
-        if let Err(e) = grab(callback) {
+        if let Err(e) = grab_with_is_repeat(callback) {
             eprintln!(
                 "[QuickAccent] grab failed: {e:?}\n\
                  Need /dev/input access: sudo usermod -aG input $USER (re-login), or ./dist/linux/install.sh"

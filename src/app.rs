@@ -20,6 +20,24 @@ fn window_width_for(count: usize) -> f32 {
     PADDING + (count as f32 * CELL_WIDTH)
 }
 
+fn overlay_settings(width: f32) -> window::Settings {
+    #[allow(unused_mut)]
+    let mut settings = window::Settings {
+        size: iced::Size::new(width, WINDOW_HEIGHT),
+        decorations: false,
+        transparent: true,
+        level: window::Level::AlwaysOnTop,
+        position: window::Position::Centered,
+        ..Default::default()
+    };
+    #[cfg(target_os = "linux")]
+    {
+        settings.platform_specific.override_redirect = true;
+        settings.platform_specific.application_id = "quickaccent".into();
+    }
+    settings
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -73,14 +91,7 @@ impl App {
                     return window::resize(id, iced::Size::new(width, WINDOW_HEIGHT));
                 }
 
-                let settings = window::Settings {
-                    size: iced::Size::new(width, WINDOW_HEIGHT),
-                    decorations: false,
-                    transparent: true,
-                    level: window::Level::AlwaysOnTop,
-                    position: window::Position::Centered,
-                    ..Default::default()
-                };
+                let settings = overlay_settings(width);
                 let (id, open_task) = window::open(settings);
                 self.overlay_window = Some(id);
                 open_task.map(Message::WindowOpened)
@@ -89,7 +100,16 @@ impl App {
                 self.selected_index = index;
                 Task::none()
             }
-            Message::HideOverlay | Message::InjectChar(_) => {
+            Message::HideOverlay => {
+                self.variants.clear();
+                if let Some(id) = self.overlay_window.take() {
+                    return window::close(id);
+                }
+                Task::none()
+            }
+            Message::InjectChar(_ch) => {
+                // Injection already happened (Linux: grab thread via uinput;
+                // macOS: grab dispatch) — just close the overlay.
                 self.variants.clear();
                 if let Some(id) = self.overlay_window.take() {
                     return window::close(id);
@@ -179,19 +199,20 @@ fn grab_subscription() -> impl iced::futures::Stream<Item = Message> {
             .take()
             .expect("grab_rx already taken");
 
-        loop {
-            if let Some(event) = rx.recv().await {
-                let msg = match event {
-                    GrabEvent::ShowOverlay { variants, index } => {
-                        Message::ShowOverlay(variants, index)
-                    }
-                    GrabEvent::UpdateSelection(index) => Message::UpdateSelection(index),
-                    GrabEvent::HideOverlay => Message::HideOverlay,
-                    GrabEvent::InjectChar(ch) => Message::InjectChar(ch),
-                    GrabEvent::FalseStart => Message::HideOverlay,
-                };
-                output.send(msg).await.ok();
-            }
+        // recv() returns None when the grab side is gone (grab disabled or
+        // its thread died) — stop instead of busy-looping on a closed channel.
+        while let Some(event) = rx.recv().await {
+            let msg = match event {
+                GrabEvent::ShowOverlay { variants, index } => {
+                    Message::ShowOverlay(variants, index)
+                }
+                GrabEvent::UpdateSelection(index) => Message::UpdateSelection(index),
+                GrabEvent::HideOverlay => Message::HideOverlay,
+                GrabEvent::InjectChar(ch) => Message::InjectChar(ch),
+                GrabEvent::FalseStart => Message::HideOverlay,
+            };
+            output.send(msg).await.ok();
         }
+        std::future::pending::<()>().await;
     })
 }

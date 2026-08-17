@@ -1,189 +1,233 @@
-use enigo::{Direction, Enigo, Key, Keyboard, Settings};
-use std::sync::mpsc::{self, SyncSender};
-use std::sync::OnceLock;
-use std::thread;
-use std::time::Duration;
+//! Accent character injection.
+//!
+//! Linux: characters reachable in the active layout are typed directly by the
+//! grab thread through the uinput virtual keyboard (see `grab.rs`); this
+//! module only handles the fallback for characters the layout can't type in
+//! one keystroke — clipboard set + virtual Ctrl+V — on a worker thread so the
+//! slow wl-copy/wl-paste process spawns never block the grab callback.
+//!
+//! macOS: enigo-based backspace + text replacement (unchanged behavior).
 
-enum Cmd {
-    Char(String),
-    Space,
-}
+#[cfg(target_os = "linux")]
+mod imp {
+    use crate::virtual_kb::{self, KeyEvt, KEY_LEFTCTRL};
+    use crate::xkb_map;
+    use std::sync::mpsc::{self, SyncSender};
+    use std::sync::OnceLock;
+    use std::thread;
+    use std::time::Duration;
 
-static TX: OnceLock<SyncSender<Cmd>> = OnceLock::new();
-
-/// Start the long-lived injection thread (call once from main).
-pub fn start() {
-    let (tx, rx) = mpsc::sync_channel(32);
-    if TX.set(tx).is_err() {
-        return;
+    struct Paste {
+        ch: String,
+        /// evdev codes of physically held Shift keys to neutralize around Ctrl+V
+        held_shifts: Vec<u16>,
     }
 
-    thread::spawn(move || {
-        let mut enigo = match create_enigo() {
-            Ok(e) => e,
-            Err(e) => {
-                eprintln!(
-                    "[QuickAccent] injection unavailable: {e}\n\
-                     GNOME Wayland: approve the Remote Desktop / input portal prompt."
-                );
-                while rx.recv().is_ok() {}
-                return;
-            }
-        };
+    static TX: OnceLock<SyncSender<Paste>> = OnceLock::new();
 
-        let delay = Duration::from_millis(20);
-        while let Ok(cmd) = rx.recv() {
-            thread::sleep(delay);
-            let result = match cmd {
-                Cmd::Char(ch) => {
-                    let _ = enigo.key(Key::Backspace, Direction::Click);
-                    thread::sleep(delay);
-                    inject_text(&mut enigo, &ch)
+    /// WAYLAND_DISPLAY is removed from our own environment (the overlay runs
+    /// through XWayland to stay focus-proof) but wl-copy/wl-paste still need
+    /// it — stash it here and pass it to the spawned processes.
+    static WAYLAND_DISPLAY: OnceLock<std::ffi::OsString> = OnceLock::new();
+
+    pub fn set_wayland_display(value: std::ffi::OsString) {
+        let _ = WAYLAND_DISPLAY.set(value);
+    }
+
+    fn with_wayland_env(cmd: &mut std::process::Command) {
+        if let Some(wl) = WAYLAND_DISPLAY.get() {
+            cmd.env("WAYLAND_DISPLAY", wl);
+        }
+    }
+
+    pub fn start() {
+        let (tx, rx) = mpsc::sync_channel(32);
+        if TX.set(tx).is_err() {
+            return;
+        }
+        thread::spawn(move || {
+            while let Ok(paste) = rx.recv() {
+                if let Err(e) = paste_via_clipboard(&paste) {
+                    eprintln!("[QuickAccent] inject failed: {e}");
                 }
-                Cmd::Space => enigo
-                    .key(Key::Space, Direction::Click)
-                    .map_err(|e| e.to_string()),
-            };
-            if let Err(e) = result {
-                eprintln!("[QuickAccent] inject failed: {e}");
+            }
+        });
+    }
+
+    /// Clipboard-paste fallback — emergency path only, when neither the
+    /// keyboard layout nor the portal can type the character directly.
+    pub fn inject_char_fallback(ch: String, held_shifts: Vec<u16>) {
+        eprintln!(
+            "[QuickAccent] WARNING: typing {ch:?} via clipboard fallback. \
+             For direct typing, accept the one-time input-sharing authorization \
+             (restart QuickAccent to be prompted again)."
+        );
+        if let Some(tx) = TX.get() {
+            let _ = tx.send(Paste { ch, held_shifts });
+        }
+    }
+
+    fn paste_via_clipboard(paste: &Paste) -> Result<(), String> {
+        let prev = clipboard_set(&paste.ch)?;
+        let result = press_ctrl_v(&paste.held_shifts);
+        // Let the focused app read the clipboard before restoring it.
+        thread::sleep(Duration::from_millis(150));
+        clipboard_restore(prev);
+        result.map(|()| eprintln!("[QuickAccent] injected via clipboard"))
+    }
+
+    fn press_ctrl_v(held_shifts: &[u16]) -> Result<(), String> {
+        // 'v' is not on the same key in every layout (Dvorak…).
+        let v = xkb_map::combo_for_char('v').map(|c| c.code).unwrap_or(47);
+        let mut seq = Vec::new();
+        for &s in held_shifts {
+            seq.push(KeyEvt::Release(s));
+        }
+        seq.push(KeyEvt::Press(KEY_LEFTCTRL));
+        seq.push(KeyEvt::Press(v));
+        seq.push(KeyEvt::Release(v));
+        seq.push(KeyEvt::Release(KEY_LEFTCTRL));
+        for &s in held_shifts {
+            seq.push(KeyEvt::Press(s));
+        }
+        virtual_kb::emit(&seq)
+    }
+
+    fn clipboard_set(ch: &str) -> Result<Option<String>, String> {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+
+        let copy = clipboard_bin("wl-copy")?;
+        let paste = clipboard_bin("wl-paste").ok();
+
+        let prev = paste.and_then(|bin| {
+            let mut cmd = Command::new(bin);
+            cmd.arg("-n");
+            with_wayland_env(&mut cmd);
+            cmd.output()
+                .ok()
+                .filter(|o| o.status.success())
+                .and_then(|o| String::from_utf8(o.stdout).ok())
+        });
+
+        let mut cmd = Command::new(copy);
+        cmd.stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null());
+        with_wayland_env(&mut cmd);
+        let mut child = cmd.spawn().map_err(|e| e.to_string())?;
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin.write_all(ch.as_bytes()).map_err(|e| e.to_string())?;
+        }
+        if !child.wait().map(|s| s.success()).unwrap_or(false) {
+            return Err("wl-copy failed".into());
+        }
+        Ok(prev)
+    }
+
+    fn clipboard_restore(prev: Option<String>) {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+
+        let Some(prev) = prev else {
+            return;
+        };
+        let Ok(copy) = clipboard_bin("wl-copy") else {
+            return;
+        };
+        let mut cmd = Command::new(copy);
+        cmd.stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null());
+        with_wayland_env(&mut cmd);
+        if let Ok(mut child) = cmd.spawn() {
+            if let Some(mut stdin) = child.stdin.take() {
+                let _ = stdin.write_all(prev.as_bytes());
+            }
+            let _ = child.wait();
+        }
+    }
+
+    fn clipboard_bin(name: &str) -> Result<String, String> {
+        for candidate in [name, &format!("/usr/bin/{name}")] {
+            let mut cmd = std::process::Command::new(candidate);
+            cmd.arg("--version")
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null());
+            with_wayland_env(&mut cmd);
+            if cmd.status().map(|s| s.success()).unwrap_or(false) {
+                return Ok(candidate.to_string());
             }
         }
-    });
-}
-
-pub fn inject_char(ch: String) {
-    send(Cmd::Char(ch));
-}
-
-pub fn inject_space() {
-    send(Cmd::Space);
-}
-
-fn send(cmd: Cmd) {
-    if let Some(tx) = TX.get() {
-        let _ = tx.send(cmd);
+        Err(format!("{name} not found"))
     }
 }
 
-fn inject_text(enigo: &mut Enigo, ch: &str) -> Result<(), String> {
-    if enigo.text(ch).is_ok() {
-        return Ok(());
+#[cfg(not(target_os = "linux"))]
+mod imp {
+    use enigo::{Direction, Enigo, Key, Keyboard, Settings};
+    use std::sync::mpsc::{self, SyncSender};
+    use std::sync::OnceLock;
+    use std::thread;
+    use std::time::Duration;
+
+    enum Cmd {
+        Char(String),
+        Space,
     }
-    #[cfg(target_os = "linux")]
-    {
-        if paste_via_clipboard(enigo, ch).is_ok() {
-            return Ok(());
+
+    static TX: OnceLock<SyncSender<Cmd>> = OnceLock::new();
+
+    pub fn start() {
+        let (tx, rx) = mpsc::sync_channel(32);
+        if TX.set(tx).is_err() {
+            return;
         }
-        if paste_via_gtk_unicode(enigo, ch).is_ok() {
-            return Ok(());
+
+        thread::spawn(move || {
+            let mut enigo = match Enigo::new(&Settings::default()) {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("[QuickAccent] injection unavailable: {e}");
+                    while rx.recv().is_ok() {}
+                    return;
+                }
+            };
+
+            while let Ok(cmd) = rx.recv() {
+                thread::sleep(Duration::from_millis(20));
+                let result = match cmd {
+                    Cmd::Char(ch) => inject_accent(&mut enigo, &ch),
+                    Cmd::Space => click_key(&mut enigo, Key::Space),
+                };
+                if let Err(e) = result {
+                    eprintln!("[QuickAccent] inject failed: {e}");
+                }
+            }
+        });
+    }
+
+    pub fn inject_char(ch: String) {
+        send(Cmd::Char(ch));
+    }
+
+    pub fn inject_space() {
+        send(Cmd::Space);
+    }
+
+    fn send(cmd: Cmd) {
+        if let Some(tx) = TX.get() {
+            let _ = tx.send(cmd);
         }
     }
-    Err(format!("could not inject {ch:?}"))
-}
 
-#[cfg(target_os = "linux")]
-fn paste_via_clipboard(enigo: &mut Enigo, ch: &str) -> Result<(), String> {
-    use std::io::Write;
-    use std::process::{Command, Stdio};
-
-    if command_missing("wl-copy") {
-        return Err("wl-copy not found".into());
-    }
-
-    let prev = Command::new("wl-paste")
-        .arg("-n")
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .and_then(|o| String::from_utf8(o.stdout).ok());
-
-    let mut child = Command::new("wl-copy")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|e| e.to_string())?;
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(ch.as_bytes()).map_err(|e| e.to_string())?;
-    }
-    let _ = child.wait();
-
-    thread::sleep(Duration::from_millis(30));
-    enigo
-        .key(Key::Control, Direction::Press)
-        .and_then(|_| enigo.key(Key::Unicode('v'), Direction::Click))
-        .and_then(|_| enigo.key(Key::Control, Direction::Release))
-        .map_err(|e| e.to_string())?;
-
-    thread::sleep(Duration::from_millis(80));
-    if let Some(prev) = prev {
-        let mut child = Command::new("wl-copy")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|e| e.to_string())?;
-        if let Some(mut stdin) = child.stdin.take() {
-            let _ = stdin.write_all(prev.as_bytes());
-        }
-        let _ = child.wait();
-    }
-    Ok(())
-}
-
-#[cfg(target_os = "linux")]
-fn paste_via_gtk_unicode(enigo: &mut Enigo, ch: &str) -> Result<(), String> {
-    let Some(c) = ch.chars().next() else {
-        return Err("empty".into());
-    };
-    let hex = format!("{:x}", c as u32);
-
-    enigo
-        .key(Key::Control, Direction::Press)
-        .and_then(|_| enigo.key(Key::Shift, Direction::Press))
-        .and_then(|_| enigo.key(Key::Unicode('u'), Direction::Click))
-        .and_then(|_| enigo.key(Key::Shift, Direction::Release))
-        .and_then(|_| enigo.key(Key::Control, Direction::Release))
-        .map_err(|e| e.to_string())?;
-
-    thread::sleep(Duration::from_millis(20));
-    for d in hex.chars() {
+    fn inject_accent(enigo: &mut Enigo, ch: &str) -> Result<(), String> {
+        click_key(enigo, Key::Backspace)?;
+        thread::sleep(Duration::from_millis(20));
         enigo
-            .key(Key::Unicode(d), Direction::Click)
-            .map_err(|e| e.to_string())?;
+            .text(ch)
+            .map_err(|e| format!("could not inject {ch:?}: {e}"))
     }
-    enigo
-        .key(Key::Return, Direction::Click)
-        .map_err(|e| e.to_string())?;
-    Ok(())
-}
 
-#[cfg(target_os = "linux")]
-fn command_missing(name: &str) -> bool {
-    std::process::Command::new("which")
-        .arg(name)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| !s.success())
-        .unwrap_or(true)
-}
-
-fn create_enigo() -> Result<Enigo, enigo::NewConError> {
-    let mut settings = Settings::default();
-    // On Wayland, $DISPLAY is often XWayland — XTEST only reaches X11 clients.
-    // Point x11 at a dummy display so enigo uses virtual-keyboard / libei instead.
-    #[cfg(target_os = "linux")]
-    if is_wayland() {
-        settings.x11_display = Some("__quickaccent_no_xwayland__".into());
+    fn click_key(enigo: &mut Enigo, key: Key) -> Result<(), String> {
+        enigo.key(key, Direction::Click).map_err(|e| e.to_string())
     }
-    Enigo::new(&settings)
 }
 
-#[cfg(target_os = "linux")]
-fn is_wayland() -> bool {
-    std::env::var("XDG_SESSION_TYPE")
-        .map(|v| v.eq_ignore_ascii_case("wayland"))
-        .unwrap_or(false)
-        || std::env::var_os("WAYLAND_DISPLAY").is_some()
-}
+pub use imp::*;

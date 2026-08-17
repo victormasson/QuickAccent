@@ -13,7 +13,6 @@ path = "src/main.rs"
 
 [dependencies]
 iced = { version = "0.13", features = ["tokio"] }
-enigo = "0.6.1"
 tokio = { version = "1", features = ["sync"] }
 log = "0.4"
 env_logger = "0.11"
@@ -23,12 +22,22 @@ dirs = "6"
 notify = "8"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+enigo = "0.6.1"
 core-graphics = "0.24"
 core-foundation = "0.10"
 cocoa = "0.26"
 objc = "0.2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-enigo = { version = "0.6.1", features = ["wayland", "libei_tokio"] }
+# remote_desktop needs screencast: ashpd's remote_desktop module imports
+# screencast::Stream unconditionally.
+ashpd = { version = "0.13.13", default-features = false, features = ["tokio", "remote_desktop", "screencast"] }
+evdev = "0.13"
 rdev = { version = "0.5", features = ["unstable_grab"] }
 xkbcommon = "0.9"
+
+# Vendored rdev 0.5.3 with a patched Linux grab: hot-plugged keyboards (USB
+# replug, Bluetooth reconnect) are grabbed+cloned like startup devices, uinput
+# clones are never re-grabbed, and odd device nodes can't kill the grab loop.
+[patch.crates-io]
+rdev = { path = "vendor/rdev" }
