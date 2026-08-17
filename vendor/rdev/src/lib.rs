@@ -380,6 +380,15 @@ where
     crate::linux::grab_with_is_repeat(callback)
 }
 
+// QuickAccent patch: exclude a device (by its input device name) from
+// grabbing — used by the embedding app so its own injection device's events
+// go straight to the compositor instead of looping back through the grab.
+#[cfg(feature = "unstable_grab")]
+#[cfg(target_os = "linux")]
+pub fn grab_skip_device_named(name: &str) {
+    crate::linux::grab_skip_device_named(name)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

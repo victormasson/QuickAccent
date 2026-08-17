@@ -307,12 +307,13 @@ mod platform {
 
         /// evdev codes of the held Shift keys (for neutralization).
         fn held_shift_codes(&self) -> Vec<u16> {
+            use crate::state_machine::{KEY_LEFTSHIFT, KEY_RIGHTSHIFT};
             let mut v = Vec::new();
             if self.shift_l {
-                v.push(42); // KEY_LEFTSHIFT
+                v.push(KEY_LEFTSHIFT);
             }
             if self.shift_r {
-                v.push(54); // KEY_RIGHTSHIFT
+                v.push(KEY_RIGHTSHIFT);
             }
             v
         }
@@ -384,16 +385,10 @@ mod platform {
             _ => None,
         };
         if let Some(combo) = single.and_then(xkb_map::combo_for_char) {
-            let altgr_code = if crate::xkb_custom::is_active() {
-                crate::xkb_custom::LEVEL3_CODE
-            } else {
-                virtual_kb::KEY_RIGHTALT
-            };
             match virtual_kb::emit_combo(
                 combo.code,
                 combo.shift,
                 combo.altgr,
-                altgr_code,
                 &held_shifts,
                 mods.altgr,
             ) {
@@ -418,16 +413,29 @@ mod platform {
 
     pub fn run_grab(
         tx: UnboundedSender<GrabEvent>,
-        _input_time_ms: u64,
+        input_time_ms: u64,
         hold_delay_ms: u64,
         activation_key: ActivationKey,
     ) {
+        // The grab swallows keystrokes and replays them through the virtual
+        // keyboard — never grab without it, or we'd eat the user's typing.
+        if let Err(e) = virtual_kb::init() {
+            eprintln!(
+                "[QuickAccent] virtual keyboard unavailable: {e}\n\
+                 QuickAccent needs /dev/uinput and /dev/input access.\n\
+                 Run ./dist/linux/install.sh, ensure you are in the 'input' group\n\
+                 (log out/in or reboot), and that the uinput module is loaded\n\
+                 (sudo modprobe uinput). Keyboard grabbing is disabled."
+            );
+            return;
+        }
+        // Our own device must not be grabbed: injected events go straight to
+        // the compositor instead of looping back through this callback.
+        rdev::grab_skip_device_named(virtual_kb::DEVICE_NAME);
+
         let _ = xkb_map::logical_letter(MappingKey::A); // warm layout map
-        xkb_map::warm_combos(); // warm char→keycode map for commit injection
-        // input_time is a macOS-only knob (it existed to decide between
-        // replaying a swallowed space and deleting an already-typed letter;
-        // deferred mode types nothing up front, so there's nothing to undo).
-        let state = RefCell::new(StateMachine::new(0, hold_delay_ms, activation_key));
+        // (input_time only matters on macOS; the deferred flow ignores it.)
+        let state = RefCell::new(StateMachine::new(input_time_ms, hold_delay_ms, activation_key));
         let mods = RefCell::new(Mods::default());
         let pending_release: RefCell<HashMap<u16, ReleaseAction>> = RefCell::new(HashMap::new());
 
@@ -439,20 +447,7 @@ mod platform {
             };
             let code = xkb_map::evdev_code_of(key);
 
-            // 1. Our own injected events loop back through the grab: pass
-            // them through untouched (no state machine, no modifier update —
-            // virtual Shift taps must not corrupt physical tracking). We
-            // never inject autorepeat, so repeats skip this check — a repeat
-            // of a still-held physical key must not eat a registry entry.
-            if !is_repeat {
-                if let Some(c) = code {
-                    if virtual_kb::take_loopback(c, i32::from(pressed)) {
-                        return Some(event);
-                    }
-                }
-            }
-
-            // Autorepeat of a key we already replayed virtually (still
+            // 1. Autorepeat of a key we already replayed virtually (still
             // physically held): swallow. Apps synthesize their own repeats
             // from key state, kernel repeat events are ignored downstream.
             if is_repeat {
@@ -463,9 +458,8 @@ mod platform {
                 }
             }
 
-            // Track physical modifier state for everything past the loopback
-            // filter (including intercepted releases below — a suppressed
-            // physical Ctrl-up must still clear the tracker).
+            // Track physical modifier state before anything can intercept —
+            // a suppressed physical Ctrl-up must still clear the tracker.
             let is_modifier = mods.borrow_mut().update(key, pressed);
 
             // 2. Physical releases of keys we already replayed virtually.

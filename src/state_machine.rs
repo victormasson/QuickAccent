@@ -75,7 +75,12 @@ impl Action {
     }
 }
 
-const KEY_LEFTSHIFT: u16 = 42;
+// Canonical evdev KEY_* codes for the modifiers the injection paths touch —
+// defined once here (next to KeyEvt) and re-exported by virtual_kb.
+pub const KEY_LEFTCTRL: u16 = 29;
+pub const KEY_LEFTSHIFT: u16 = 42;
+pub const KEY_RIGHTSHIFT: u16 = 54;
+pub const KEY_RIGHTALT: u16 = 100;
 
 #[derive(Clone)]
 pub enum AccentState {
@@ -328,14 +333,14 @@ impl StateMachine {
                 Action::pass()
             }
             AccentState::LetterHeld {
+                key,
                 code: held,
                 shift_at_press,
                 variants,
                 held_since,
-                ..
             } => {
-                let held = *held;
-                let shift_at_press = *shift_at_press;
+                let (key, held, shift_at_press, held_since) =
+                    (*key, *held, *shift_at_press, *held_since);
                 if code == Some(held) {
                     // Kernel autorepeat of the held letter — it must not type.
                     return Action::swallow();
@@ -343,22 +348,13 @@ impl StateMachine {
                 if self.is_trigger(input) {
                     if held_since.elapsed() >= self.hold_delay {
                         let variants = variants.clone();
-                        if let AccentState::LetterHeld {
+                        self.state = AccentState::Selecting {
                             key,
-                            code,
-                            variants,
+                            code: held,
+                            variants: variants.clone(),
+                            selected_index: 0,
                             held_since,
-                            ..
-                        } = std::mem::replace(&mut self.state, AccentState::Idle)
-                        {
-                            self.state = AccentState::Selecting {
-                                key,
-                                code,
-                                variants,
-                                selected_index: 0,
-                                held_since,
-                            };
-                        }
+                        };
                         return Action {
                             suppress: true,
                             ui: Some(GrabEvent::ShowOverlay { variants, index: 0 }),
@@ -409,18 +405,15 @@ impl StateMachine {
                 let len = variants.len();
                 let idx = *selected_index;
                 match input {
-                    KeyInput::Space | KeyInput::RightArrow => {
-                        let new_index = (idx + 1) % len;
-                        self.set_selected(new_index);
-                        Action {
-                            suppress: true,
-                            ui: Some(GrabEvent::UpdateSelection(new_index)),
-                            ..Action::default()
+                    KeyInput::Space | KeyInput::RightArrow | KeyInput::LeftArrow => {
+                        let new_index = if input == KeyInput::LeftArrow {
+                            (idx + len - 1) % len
+                        } else {
+                            (idx + 1) % len
+                        };
+                        if let AccentState::Selecting { selected_index, .. } = &mut self.state {
+                            *selected_index = new_index;
                         }
-                    }
-                    KeyInput::LeftArrow => {
-                        let new_index = (idx + len - 1) % len;
-                        self.set_selected(new_index);
                         Action {
                             suppress: true,
                             ui: Some(GrabEvent::UpdateSelection(new_index)),
@@ -504,12 +497,6 @@ impl StateMachine {
             ]
         } else {
             vec![KeyEvt::Press(code), KeyEvt::Release(code)]
-        }
-    }
-
-    fn set_selected(&mut self, new_index: usize) {
-        if let AccentState::Selecting { selected_index, .. } = &mut self.state {
-            *selected_index = new_index;
         }
     }
 

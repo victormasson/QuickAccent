@@ -128,22 +128,10 @@ fn active_layout_variant() -> (String, String) {
 /// ("fr", "oss"). mru-sources lists most-recently-used first; falls back to
 /// the configured sources list.
 fn detect_gnome_layout() -> Option<(String, String)> {
-    for key in ["mru-sources", "sources"] {
-        let Ok(out) = std::process::Command::new("gsettings")
-            .args(["get", "org.gnome.desktop.input-sources", key])
-            .output()
-        else {
-            return None; // gsettings not installed — not a GNOME session
-        };
-        if !out.status.success() {
-            continue;
-        }
-        let text = String::from_utf8_lossy(&out.stdout);
-        if let Some(lv) = parse_gnome_source(&text) {
-            return Some(lv);
-        }
-    }
-    None
+    ["mru-sources", "sources"]
+        .iter()
+        .filter_map(|key| crate::xkb_custom::gsettings_get(key))
+        .find_map(|text| parse_gnome_source(&text))
 }
 
 /// Extract the first ('xkb', '<layout>[+variant]') tuple from a gsettings

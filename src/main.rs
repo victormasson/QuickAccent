@@ -27,13 +27,10 @@ fn main() -> iced::Result {
     #[cfg(target_os = "linux")]
     {
         let args: Vec<String> = std::env::args().collect();
-        if args.iter().any(|a| a == "--portal-probe") {
-            let test_char = args.last().and_then(|a| {
+        if let Some(i) = args.iter().position(|a| a == "--portal-probe") {
+            let test_char = args.get(i + 1).and_then(|a| {
                 let mut it = a.chars();
-                match (it.next(), it.next()) {
-                    (Some(c), None) if *a != "--portal-probe" => Some(c),
-                    _ => None,
-                }
+                it.next().filter(|_| it.next().is_none())
             });
             portal_keysym::probe(test_char);
             return Ok(());
@@ -51,32 +48,8 @@ fn main() -> iced::Result {
     let grab_rx = Arc::new(Mutex::new(Some(rx)));
 
     #[cfg(target_os = "linux")]
-    setup_direct_typing();
+    linux_setup();
 
-    // The overlay must never take keyboard focus: on GNOME Wayland a new
-    // toplevel always gets focused, which swallowed the injected accents.
-    // Run the UI through XWayland instead — override_redirect windows are
-    // focus-proof there. Keep the Wayland socket for wl-copy/wl-paste.
-    #[cfg(target_os = "linux")]
-    if let Some(wl) = std::env::var_os("WAYLAND_DISPLAY") {
-        injection::set_wayland_display(wl.clone());
-        std::env::remove_var("WAYLAND_DISPLAY");
-    }
-
-    // The grab swallows keystrokes and replays them through the virtual
-    // keyboard — never grab without it, or we'd eat the user's typing.
-    #[cfg(target_os = "linux")]
-    match virtual_kb::init() {
-        Ok(()) => grab::run_grab_thread(tx, &config),
-        Err(e) => eprintln!(
-            "[QuickAccent] virtual keyboard unavailable: {e}\n\
-             QuickAccent needs /dev/uinput and /dev/input access.\n\
-             Run ./dist/linux/install.sh, ensure you are in the 'input' group\n\
-             (log out/in or reboot), and that the uinput module is loaded\n\
-             (sudo modprobe uinput). Keyboard grabbing is disabled."
-        ),
-    }
-    #[cfg(not(target_os = "linux"))]
     grab::run_grab_thread(tx, &config);
 
     #[cfg(target_os = "macos")]
@@ -87,6 +60,20 @@ fn main() -> iced::Result {
         .subscription(app::App::subscription)
         .theme(app::App::theme)
         .run_with(move || app::App::new(grab_rx_clone.clone()))
+}
+
+/// Linux startup sequence with load-bearing ordering: make every accent
+/// directly typeable, then hide the Wayland socket BEFORE iced starts so the
+/// overlay runs through XWayland — a native Wayland toplevel always takes
+/// keyboard focus on GNOME and would swallow the injected characters
+/// (override_redirect windows are focus-proof, but only exist on X11).
+#[cfg(target_os = "linux")]
+fn linux_setup() {
+    setup_direct_typing();
+    if let Some(wl) = std::env::var_os("WAYLAND_DISPLAY") {
+        injection::set_wayland_display(wl.clone());
+        std::env::remove_var("WAYLAND_DISPLAY");
+    }
 }
 
 /// Make every configured accent character directly typeable: characters the
@@ -104,6 +91,11 @@ fn setup_direct_typing() {
             base_missing.iter().take(5).collect::<String>()
         );
         xkb_custom::ensure_installed(&base_missing);
+    }
+    if xkb_custom::is_active() {
+        // The custom option provides the level-3 switch on F24; the plain
+        // layout may have no real AltGr at all (us).
+        virtual_kb::set_level3_code(xkb_custom::LEVEL3_CODE);
     }
     // Build the combo map with the option applied and see what's left.
     xkb_map::warm_combos();

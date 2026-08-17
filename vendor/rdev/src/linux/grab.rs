@@ -467,6 +467,12 @@ where
         {
             continue;
         }
+        // QuickAccent patch: never grab the application's own virtual device.
+        if let Some(name) = path.file_name() {
+            if is_skipped_device(name) {
+                continue;
+            }
+        }
         // QuickAccent patch: skip nodes we can't open instead of failing the
         // whole grab (e.g. a freshly created uinput node udev hasn't
         // relabeled yet).
@@ -495,6 +501,30 @@ fn inotify_devices() -> io::Result<Inotify> {
     let mut inotify = Inotify::init()?;
     inotify.add_watch(DEV_PATH, WatchMask::CREATE)?;
     Ok(inotify)
+}
+
+// QuickAccent patch: let the embedding application exclude its own virtual
+// input device from grabbing (by device name). Events it injects then go
+// straight to the compositor instead of looping back through the grab.
+static SKIP_DEVICE_NAME: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+pub fn grab_skip_device_named(name: &str) {
+    let _ = SKIP_DEVICE_NAME.set(name.to_string());
+}
+
+/// sysfs name of /dev/input/<node>, e.g. "AT Translated Set 2 keyboard".
+fn device_name(node: &OsStr) -> Option<String> {
+    let path = Path::new("/sys/class/input").join(node).join("device/name");
+    std::fs::read_to_string(path)
+        .ok()
+        .map(|s| s.trim_end().to_string())
+}
+
+fn is_skipped_device(node: &OsStr) -> bool {
+    match SKIP_DEVICE_NAME.get() {
+        Some(skip) => device_name(node).as_deref() == Some(skip.as_str()),
+        None => false,
+    }
 }
 
 // QuickAccent patch: hot-plugged devices are grabbed and cloned exactly like

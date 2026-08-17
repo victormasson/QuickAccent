@@ -107,17 +107,14 @@ pub fn ensure_installed(missing: &[char]) {
 }
 
 fn xkb_dir() -> PathBuf {
-    std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            dirs::home_dir()
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join(".config")
-        })
+    // On Linux this is $XDG_CONFIG_HOME or ~/.config — the path libxkbcommon
+    // scans for user configuration.
+    dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
         .join("xkb")
 }
 
-fn write_file(path: &std::path::Path, content: &str) -> std::io::Result<()> {
+pub(crate) fn write_file(path: &std::path::Path, content: &str) -> std::io::Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
@@ -242,17 +239,20 @@ fn ensure_gnome_option(force_reload: bool) -> Option<bool> {
     Some(gsettings_set_options(&with))
 }
 
-pub(crate) fn gsettings_get_options() -> Option<Vec<String>> {
+/// Read a key from GNOME's input-sources schema. None = not GNOME (gsettings
+/// missing) or key unreadable.
+pub(crate) fn gsettings_get(key: &str) -> Option<String> {
     let out = std::process::Command::new("gsettings")
-        .args(["get", "org.gnome.desktop.input-sources", "xkb-options"])
+        .args(["get", "org.gnome.desktop.input-sources", key])
         .output()
         .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    Some(parse_gvariant_string_list(&String::from_utf8_lossy(
-        &out.stdout,
-    )))
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+pub(crate) fn gsettings_get_options() -> Option<Vec<String>> {
+    Some(parse_gvariant_string_list(&gsettings_get("xkb-options")?))
 }
 
 fn gsettings_set_options(options: &[String]) -> bool {

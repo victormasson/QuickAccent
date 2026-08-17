@@ -12,7 +12,7 @@ mod simulate;
 
 pub use crate::linux::display::display_size;
 #[cfg(feature = "unstable_grab")]
-pub use crate::linux::grab::{grab, grab_with_is_repeat};
+pub use crate::linux::grab::{grab, grab_skip_device_named, grab_with_is_repeat};
 pub use crate::linux::keyboard::Keyboard;
 pub use crate::linux::listen::listen;
 pub use crate::linux::simulate::simulate;

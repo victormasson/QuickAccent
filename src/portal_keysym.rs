@@ -245,11 +245,7 @@ fn load_token() -> Option<String> {
 }
 
 fn save_token(token: &str) {
-    let path = token_path();
-    if let Some(dir) = path.parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
-    if let Err(e) = std::fs::write(&path, token) {
+    if let Err(e) = crate::xkb_custom::write_file(&token_path(), token) {
         eprintln!("[QuickAccent] could not save portal token: {e}");
     }
 }

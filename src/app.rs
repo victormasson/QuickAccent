@@ -56,7 +56,7 @@ pub enum Message {
     ShowOverlay(Vec<String>, usize),
     UpdateSelection(usize),
     HideOverlay,
-    InjectChar(String),
+    InjectChar,
     WindowOpened(window::Id),
 }
 
@@ -100,16 +100,9 @@ impl App {
                 self.selected_index = index;
                 Task::none()
             }
-            Message::HideOverlay => {
-                self.variants.clear();
-                if let Some(id) = self.overlay_window.take() {
-                    return window::close(id);
-                }
-                Task::none()
-            }
-            Message::InjectChar(_ch) => {
-                // Injection already happened (Linux: grab thread via uinput;
-                // macOS: grab dispatch) — just close the overlay.
+            // On InjectChar the injection already happened (Linux: grab
+            // thread via uinput; macOS: grab dispatch) — just close.
+            Message::HideOverlay | Message::InjectChar => {
                 self.variants.clear();
                 if let Some(id) = self.overlay_window.take() {
                     return window::close(id);
@@ -208,7 +201,7 @@ fn grab_subscription() -> impl iced::futures::Stream<Item = Message> {
                 }
                 GrabEvent::UpdateSelection(index) => Message::UpdateSelection(index),
                 GrabEvent::HideOverlay => Message::HideOverlay,
-                GrabEvent::InjectChar(ch) => Message::InjectChar(ch),
+                GrabEvent::InjectChar(_) => Message::InjectChar,
                 GrabEvent::FalseStart => Message::HideOverlay,
             };
             output.send(msg).await.ok();

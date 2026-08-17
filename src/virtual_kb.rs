@@ -2,78 +2,47 @@
 //!
 //! All replayed/injected keystrokes go through this single device so their
 //! ordering is preserved and no display-server permission (portal) is needed.
-//!
-//! Loopback: rdev's grab hot-plugs and EVIOCGRABs this device too, so every
-//! event we emit comes back through our own grab callback. `emit` registers
-//! the expected (code, value) pairs *before* writing; the callback calls
-//! `take_loopback` first and passes matching events through untouched.
+//! The device is excluded from the evdev grab by name (see
+//! `rdev::grab_skip_device_named`), so injected events go straight to the
+//! compositor without looping back through our own grab callback.
 
 use evdev::uinput::VirtualDevice;
 use evdev::{AttributeSet, EventType, InputEvent, KeyCode};
+use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant};
+
+pub use crate::state_machine::{KeyEvt, KEY_LEFTCTRL, KEY_RIGHTALT};
+
+pub const DEVICE_NAME: &str = "QuickAccent Virtual Keyboard";
 
 static DEVICE: OnceLock<Mutex<VirtualDevice>> = OnceLock::new();
-static REGISTRY: Mutex<Vec<(u16, i32, Instant)>> = Mutex::new(Vec::new());
 
-/// Registry entries older than this are dropped (lost/never-looped events
-/// must not poison future matching).
-const LOOPBACK_TTL: Duration = Duration::from_millis(500);
+/// Key pressed to reach xkb levels 3/4: the real AltGr by default, KEY_F24
+/// when the custom xkb option provides the level-3 switch (set once at
+/// startup by `setup_direct_typing`).
+static LEVEL3_CODE: AtomicU16 = AtomicU16::new(KEY_RIGHTALT);
 
-pub const KEY_LEFTCTRL: u16 = 29;
-pub const KEY_LEFTSHIFT: u16 = 42;
-pub const KEY_RIGHTALT: u16 = 100; // AltGr
+pub fn set_level3_code(code: u16) {
+    LEVEL3_CODE.store(code, Ordering::Relaxed);
+}
 
-pub use crate::state_machine::KeyEvt;
-
-/// Create the virtual keyboard. Must be called before the grab starts so the
-/// device is grabbed (and loopback-filtered) deterministically from the start.
+/// Create the virtual keyboard. Must be called before the grab starts.
 pub fn init() -> Result<(), String> {
     let mut keys = AttributeSet::<KeyCode>::new();
     // KEY_ESC(1) ..= KEY_MICMUTE(248): every key a physical keyboard can send.
     for code in 1..=248u16 {
         keys.insert(KeyCode::new(code));
     }
-    let mut dev = VirtualDevice::builder()
+    let dev = VirtualDevice::builder()
         .map_err(|e| format!("open /dev/uinput: {e}"))?
-        .name("QuickAccent Virtual Keyboard")
+        .name(DEVICE_NAME)
         .with_keys(&keys)
         .map_err(|e| format!("set key capabilities: {e}"))?
         .build()
         .map_err(|e| format!("create virtual device: {e}"))?;
-    wait_for_node_access(&mut dev);
     DEVICE
         .set(Mutex::new(dev))
         .map_err(|_| "virtual keyboard already initialized".to_string())
-}
-
-/// The grab (rdev) enumerates /dev/input right after us and opens every node.
-/// Our freshly created node starts root-owned until udev applies the
-/// input-group rule — wait for that, or the whole grab fails with EACCES.
-fn wait_for_node_access(dev: &mut VirtualDevice) {
-    let _ = std::process::Command::new("udevadm")
-        .args(["settle", "--timeout=2"])
-        .status();
-
-    let node = dev.get_syspath().ok().and_then(|sys| {
-        std::fs::read_dir(sys).ok()?.find_map(|e| {
-            let name = e.ok()?.file_name();
-            name.to_str()?
-                .starts_with("event")
-                .then(|| std::path::Path::new("/dev/input").join(name))
-        })
-    });
-    let Some(node) = node else { return };
-    for _ in 0..40 {
-        if std::fs::OpenOptions::new().read(true).open(&node).is_ok() {
-            return;
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    eprintln!(
-        "[QuickAccent] warning: {} not readable after 2s (udev rule missing?)",
-        node.display()
-    );
 }
 
 /// Emit key events, each in its own SYN_REPORT frame so modifier state is
@@ -83,15 +52,6 @@ pub fn emit(events: &[KeyEvt]) -> Result<(), String> {
     let Some(dev) = DEVICE.get() else {
         return Err("virtual keyboard not initialized".into());
     };
-    {
-        // Register expected loopback events BEFORE writing: the grab thread
-        // can see them microseconds after the write syscall.
-        let mut reg = REGISTRY.lock().unwrap();
-        let now = Instant::now();
-        for e in events {
-            reg.push((e.code(), e.value(), now));
-        }
-    }
     let mut dev = dev.lock().unwrap();
     for e in events {
         dev.emit(&[InputEvent::new(EventType::KEY.0, e.code(), e.value())])
@@ -103,96 +63,119 @@ pub fn emit(events: &[KeyEvt]) -> Result<(), String> {
 /// Tap `code` with exactly the wanted Shift/AltGr state, neutralizing
 /// physically held modifiers around it (release-then-restore) so the
 /// compositor sees the intended level, then returns to the live state.
-/// `altgr_code` is the key pressed to reach levels 3/4 — KEY_RIGHTALT on
-/// layouts with a real AltGr, KEY_F24 when our custom xkb option provides
-/// the level-3 switch.
 pub fn emit_combo(
+    code: u16,
+    want_shift: bool,
+    want_altgr: bool,
+    held_shifts: &[u16],
+    held_altgr: bool,
+) -> Result<(), String> {
+    emit(&combo_sequence(
+        code,
+        want_shift,
+        want_altgr,
+        LEVEL3_CODE.load(Ordering::Relaxed),
+        held_shifts,
+        held_altgr,
+    ))
+}
+
+fn combo_sequence(
     code: u16,
     want_shift: bool,
     want_altgr: bool,
     altgr_code: u16,
     held_shifts: &[u16],
     held_altgr: bool,
-) -> Result<(), String> {
-    let mut seq = Vec::new();
+) -> Vec<KeyEvt> {
+    use crate::state_machine::KEY_LEFTSHIFT;
+    // Wrappers are collected as (before, after) pairs; the epilogue runs in
+    // reverse so modifiers unwind in the opposite order they were applied.
+    let mut pre = Vec::new();
+    let mut post = Vec::new();
     if want_shift {
         if held_shifts.is_empty() {
-            seq.push(KeyEvt::Press(KEY_LEFTSHIFT));
+            pre.push(KeyEvt::Press(KEY_LEFTSHIFT));
+            post.push(KeyEvt::Release(KEY_LEFTSHIFT));
         }
     } else {
         for &s in held_shifts {
-            seq.push(KeyEvt::Release(s));
+            pre.push(KeyEvt::Release(s));
+            post.push(KeyEvt::Press(s));
         }
     }
     // Skip the tap only when the wanted level-3 key is the real AltGr and
     // the user is already physically holding it.
     let tap_altgr = want_altgr && !(held_altgr && altgr_code == KEY_RIGHTALT);
     if tap_altgr {
-        seq.push(KeyEvt::Press(altgr_code));
+        pre.push(KeyEvt::Press(altgr_code));
+        post.push(KeyEvt::Release(altgr_code));
     } else if !want_altgr && held_altgr {
         // The physically held AltGr is always the real right-alt key.
-        seq.push(KeyEvt::Release(KEY_RIGHTALT));
+        pre.push(KeyEvt::Release(KEY_RIGHTALT));
+        post.push(KeyEvt::Press(KEY_RIGHTALT));
     }
+    post.reverse();
+    let mut seq = pre;
     seq.push(KeyEvt::Press(code));
     seq.push(KeyEvt::Release(code));
-    if tap_altgr {
-        seq.push(KeyEvt::Release(altgr_code));
-    } else if !want_altgr && held_altgr {
-        seq.push(KeyEvt::Press(KEY_RIGHTALT));
-    }
-    if want_shift {
-        if held_shifts.is_empty() {
-            seq.push(KeyEvt::Release(KEY_LEFTSHIFT));
-        }
-    } else {
-        for &s in held_shifts {
-            seq.push(KeyEvt::Press(s));
-        }
-    }
-    emit(&seq)
-}
-
-/// Returns true if (code, value) matches an event we injected; the entry is
-/// consumed. Called first for every key event in the grab callback.
-pub fn take_loopback(code: u16, value: i32) -> bool {
-    let mut reg = REGISTRY.lock().unwrap();
-    let now = Instant::now();
-    reg.retain(|(_, _, t)| now.duration_since(*t) < LOOPBACK_TTL);
-    if let Some(pos) = reg.iter().position(|(c, v, _)| *c == code && *v == value) {
-        reg.remove(pos);
-        true
-    } else {
-        false
-    }
+    seq.extend(post);
+    seq
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::state_machine::KEY_LEFTSHIFT;
+    use KeyEvt::{Press, Release};
 
-    // Single test for the shared global REGISTRY (parallel tests would race).
     #[test]
-    fn loopback_registry_matches_consumes_and_expires() {
-        // Use the registry directly (no /dev/uinput in CI).
-        {
-            let mut reg = REGISTRY.lock().unwrap();
-            reg.clear();
-            let now = Instant::now();
-            reg.push((18, 1, now)); // KEY_E press
-            reg.push((18, 0, now)); // KEY_E release
-            reg.push((30, 1, now - Duration::from_millis(600))); // expired KEY_A
-        }
-        assert!(!take_loopback(30, 1)); // expired entry dropped
-        assert!(take_loopback(18, 1));
-        assert!(!take_loopback(18, 1)); // consumed
-        assert!(take_loopback(18, 0));
-        assert!(!take_loopback(44, 1)); // never registered
+    fn plain_combo_is_a_bare_tap() {
+        assert_eq!(
+            combo_sequence(18, false, false, KEY_RIGHTALT, &[], false),
+            vec![Press(18), Release(18)]
+        );
     }
 
     #[test]
-    fn keyevt_codes_and_values() {
-        assert_eq!(KeyEvt::Press(57).code(), 57);
-        assert_eq!(KeyEvt::Press(57).value(), 1);
-        assert_eq!(KeyEvt::Release(57).value(), 0);
+    fn shift_combo_wraps_when_shift_not_held() {
+        assert_eq!(
+            combo_sequence(18, true, false, KEY_RIGHTALT, &[], false),
+            vec![
+                Press(KEY_LEFTSHIFT),
+                Press(18),
+                Release(18),
+                Release(KEY_LEFTSHIFT)
+            ]
+        );
+    }
+
+    #[test]
+    fn held_shift_is_neutralized_and_restored() {
+        assert_eq!(
+            combo_sequence(18, false, false, KEY_RIGHTALT, &[42, 54], false),
+            vec![
+                Release(42),
+                Release(54),
+                Press(18),
+                Release(18),
+                Press(54),
+                Press(42)
+            ]
+        );
+    }
+
+    #[test]
+    fn altgr_level_uses_configured_level3_key() {
+        // Custom-option case: F24 (194) is the level-3 switch.
+        assert_eq!(
+            combo_sequence(183, false, true, 194, &[], false),
+            vec![Press(194), Press(183), Release(183), Release(194)]
+        );
+        // Real AltGr already physically held: no tap needed.
+        assert_eq!(
+            combo_sequence(3, false, true, KEY_RIGHTALT, &[], true),
+            vec![Press(3), Release(3)]
+        );
     }
 }

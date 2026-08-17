@@ -144,18 +144,33 @@ mod imp {
         }
     }
 
+    /// Resolve a clipboard binary once and cache the result — each paste
+    /// otherwise spawns three extra `--version` probes on a latency-visible
+    /// path.
     fn clipboard_bin(name: &str) -> Result<String, String> {
-        for candidate in [name, &format!("/usr/bin/{name}")] {
-            let mut cmd = std::process::Command::new(candidate);
-            cmd.arg("--version")
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null());
-            with_wayland_env(&mut cmd);
-            if cmd.status().map(|s| s.success()).unwrap_or(false) {
-                return Ok(candidate.to_string());
-            }
+        static CACHE: OnceLock<std::sync::Mutex<std::collections::HashMap<String, Option<String>>>> =
+            OnceLock::new();
+        let cache = CACHE.get_or_init(Default::default);
+        if let Some(cached) = cache.lock().unwrap().get(name) {
+            return cached.clone().ok_or_else(|| format!("{name} not found"));
         }
-        Err(format!("{name} not found"))
+        let found = [name, &format!("/usr/bin/{name}")]
+            .into_iter()
+            .find(|candidate| {
+                std::process::Command::new(candidate)
+                    .arg("--version")
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()
+                    .map(|s| s.success())
+                    .unwrap_or(false)
+            })
+            .map(str::to_string);
+        cache
+            .lock()
+            .unwrap()
+            .insert(name.to_string(), found.clone());
+        found.ok_or_else(|| format!("{name} not found"))
     }
 }
 
