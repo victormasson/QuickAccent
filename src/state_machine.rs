@@ -604,12 +604,17 @@ mod tests {
     use super::*;
     use crate::mappings::{self, MappingKey};
 
-    fn setup() {
+    /// Initializes the global mappings and holds the cross-test guard for
+    /// the test's duration — bind it: `let _guard = setup();`.
+    #[must_use]
+    fn setup() -> std::sync::MutexGuard<'static, ()> {
+        let guard = mappings::test_guard();
         mappings::init(&[
             "French".into(),
             "German".into(),
             "Spanish".into(),
         ]);
+        guard
     }
 
     fn sm(activation: ActivationKey) -> StateMachine {
@@ -643,14 +648,14 @@ mod tests {
 
     #[test]
     fn idle_letter_with_variants_enters_letter_held() {
-        setup();
+        let _guard = setup();
         let mut sm = sm(ActivationKey::Both);
         press_e(&mut sm);
     }
 
     #[test]
     fn idle_letter_without_variants_stays_idle() {
-        setup();
+        let _guard = setup();
         let mut sm = sm(ActivationKey::Both);
         // French/German/Spanish have no accents on F typically... check
         let variants = mappings::get_variants(MappingKey::F, false);
@@ -668,7 +673,7 @@ mod tests {
 
     #[test]
     fn trigger_before_hold_delay_cancels_without_overlay() {
-        setup();
+        let _guard = setup();
         let mut sm = sm(ActivationKey::Both);
         press_e(&mut sm);
         // held_since is ~now; hold_delay 250ms → too early
@@ -680,7 +685,7 @@ mod tests {
 
     #[test]
     fn trigger_after_hold_delay_opens_overlay() {
-        setup();
+        let _guard = setup();
         let mut sm = sm(ActivationKey::Both);
         let variants = open_overlay(&mut sm);
         assert!(variants.iter().any(|v| v == "é" || v.contains('é')));
@@ -688,7 +693,7 @@ mod tests {
 
     #[test]
     fn space_and_right_cycle_forward_with_wrap() {
-        setup();
+        let _guard = setup();
         let mut sm = sm(ActivationKey::Both);
         let variants = open_overlay(&mut sm);
         let n = variants.len();
@@ -716,7 +721,7 @@ mod tests {
 
     #[test]
     fn left_arrow_cycles_backward_with_wrap() {
-        setup();
+        let _guard = setup();
         let mut sm = sm(ActivationKey::Both);
         let variants = open_overlay(&mut sm);
         let n = variants.len();
@@ -728,7 +733,7 @@ mod tests {
 
     #[test]
     fn escape_hides_overlay_and_idles() {
-        setup();
+        let _guard = setup();
         let mut sm = sm(ActivationKey::Both);
         open_overlay(&mut sm);
         let (s, ev) = sm.handle_key_press(KeyInput::Escape, false);
@@ -739,7 +744,7 @@ mod tests {
 
     #[test]
     fn release_after_input_time_injects_and_cools_down() {
-        setup();
+        let _guard = setup();
         let mut sm = sm(ActivationKey::Both);
         let variants = open_overlay(&mut sm);
         sm.set_held_ago(Duration::from_millis(500)); // > input_time 200
@@ -751,7 +756,7 @@ mod tests {
 
     #[test]
     fn release_before_input_time_is_false_start() {
-        setup();
+        let _guard = setup();
         let mut sm = sm(ActivationKey::Both);
         open_overlay(&mut sm);
         // held_since still ~when LetterHeld started; if we just opened, elapsed may be small
@@ -765,7 +770,7 @@ mod tests {
 
     #[test]
     fn release_other_letter_while_selecting_does_nothing() {
-        setup();
+        let _guard = setup();
         let mut sm = sm(ActivationKey::Both);
         open_overlay(&mut sm);
         sm.set_held_ago(Duration::from_millis(500));
@@ -777,7 +782,7 @@ mod tests {
 
     #[test]
     fn other_letter_while_held_cancels() {
-        setup();
+        let _guard = setup();
         let mut sm = sm(ActivationKey::Both);
         press_e(&mut sm);
         let (s, ev) = sm.handle_key_press(KeyInput::Letter(MappingKey::A), false);
@@ -788,7 +793,7 @@ mod tests {
 
     #[test]
     fn same_letter_repeat_while_held_ignored() {
-        setup();
+        let _guard = setup();
         let mut sm = sm(ActivationKey::Both);
         press_e(&mut sm);
         let (s, ev) = sm.handle_key_press(KeyInput::Letter(MappingKey::E), false);
@@ -799,7 +804,7 @@ mod tests {
 
     #[test]
     fn release_letter_while_held_returns_idle() {
-        setup();
+        let _guard = setup();
         let mut sm = sm(ActivationKey::Both);
         press_e(&mut sm);
         let (s, ev) = sm.handle_key_release(KeyInput::Letter(MappingKey::E));
@@ -810,7 +815,7 @@ mod tests {
 
     #[test]
     fn activation_space_only_ignores_arrows() {
-        setup();
+        let _guard = setup();
         let mut sm = sm(ActivationKey::Space);
         press_e(&mut sm);
         sm.set_held_ago(Duration::from_millis(300));
@@ -823,7 +828,7 @@ mod tests {
 
     #[test]
     fn activation_arrows_only_ignores_space() {
-        setup();
+        let _guard = setup();
         let mut sm = sm(ActivationKey::LeftRightArrow);
         press_e(&mut sm);
         sm.set_held_ago(Duration::from_millis(300));
@@ -841,7 +846,7 @@ mod tests {
 
     #[test]
     fn update_shift_refreshes_variants() {
-        setup();
+        let _guard = setup();
         let mut sm = sm(ActivationKey::Both);
         open_overlay(&mut sm);
         let ev = sm.update_shift(true);
@@ -860,7 +865,7 @@ mod tests {
 
     #[test]
     fn cooldown_blocks_letter_held() {
-        setup();
+        let _guard = setup();
         let mut sm = sm(ActivationKey::Both);
         sm.enter_cooldown_for(Duration::from_secs(30));
         let (s, ev) = sm.handle_key_press(KeyInput::Letter(MappingKey::E), false);
@@ -872,7 +877,7 @@ mod tests {
 
     #[test]
     fn expired_cooldown_acts_like_idle() {
-        setup();
+        let _guard = setup();
         let mut sm = sm(ActivationKey::Both);
         sm.enter_cooldown_expired();
         let (s, ev) = sm.handle_key_press(KeyInput::Letter(MappingKey::E), false);
@@ -883,7 +888,7 @@ mod tests {
 
     #[test]
     fn force_reset_clears_selecting() {
-        setup();
+        let _guard = setup();
         let mut sm = sm(ActivationKey::Both);
         open_overlay(&mut sm);
         sm.force_reset();
@@ -892,7 +897,7 @@ mod tests {
 
     #[test]
     fn selecting_suppresses_unrelated_keys() {
-        setup();
+        let _guard = setup();
         let mut sm = sm(ActivationKey::Both);
         open_overlay(&mut sm);
         let (s, ev) = sm.handle_key_press(KeyInput::Other, false);
@@ -937,14 +942,14 @@ mod tests {
 
     #[test]
     fn deferred_letter_is_suppressed_on_press() {
-        setup();
+        let _guard = setup();
         let mut sm = sm(ActivationKey::Both);
         deferred_press_e(&mut sm);
     }
 
     #[test]
     fn deferred_letter_with_mods_passes_through() {
-        setup();
+        let _guard = setup();
         let mut sm = sm(ActivationKey::Both);
         let a = sm.deferred_press(KeyInput::Letter(MappingKey::E), Some(E), false, true);
         assert_eq!(a, Action::pass());
@@ -953,7 +958,7 @@ mod tests {
 
     #[test]
     fn deferred_unmappable_letter_passes_through() {
-        setup();
+        let _guard = setup();
         let mut sm = sm(ActivationKey::Both);
         let a = sm.deferred_press(KeyInput::Letter(MappingKey::E), None, false, false);
         assert_eq!(a, Action::pass());
@@ -962,7 +967,7 @@ mod tests {
 
     #[test]
     fn deferred_release_replays_letter() {
-        setup();
+        let _guard = setup();
         let mut sm = sm(ActivationKey::Both);
         deferred_press_e(&mut sm);
         let a = sm.deferred_release(Some(E), false);
@@ -974,7 +979,7 @@ mod tests {
 
     #[test]
     fn deferred_release_wraps_shift_if_dropped() {
-        setup();
+        let _guard = setup();
         let mut sm = sm(ActivationKey::Both);
         let a = sm.deferred_press(KeyInput::Letter(MappingKey::E), Some(E), true, false);
         assert!(a.suppress);
@@ -993,7 +998,7 @@ mod tests {
 
     #[test]
     fn deferred_autorepeat_is_swallowed() {
-        setup();
+        let _guard = setup();
         let mut sm = sm(ActivationKey::Both);
         deferred_press_e(&mut sm);
         let a = sm.deferred_press(KeyInput::Letter(MappingKey::E), Some(E), false, false);
@@ -1004,14 +1009,14 @@ mod tests {
 
     #[test]
     fn deferred_trigger_after_hold_opens_overlay() {
-        setup();
+        let _guard = setup();
         let mut sm = sm(ActivationKey::Both);
         deferred_open_overlay(&mut sm);
     }
 
     #[test]
     fn deferred_fast_trigger_replays_letter_and_trigger() {
-        setup();
+        let _guard = setup();
         let mut sm = sm(ActivationKey::Both);
         deferred_press_e(&mut sm);
         // Space right away (< hold_delay): normal "e " typing.
@@ -1033,7 +1038,7 @@ mod tests {
 
     #[test]
     fn deferred_rollover_replays_letter_then_new_key() {
-        setup();
+        let _guard = setup();
         let mut sm = sm(ActivationKey::Both);
         deferred_press_e(&mut sm);
         let a = sm.deferred_press(KeyInput::Other, Some(COMMA), false, false);
@@ -1054,7 +1059,7 @@ mod tests {
 
     #[test]
     fn deferred_rollover_chains_to_next_letter() {
-        setup();
+        let _guard = setup();
         let mut sm = sm(ActivationKey::Both);
         deferred_press_e(&mut sm);
         let a = sm.deferred_press(KeyInput::Letter(MappingKey::A), Some(A), false, false);
@@ -1068,7 +1073,7 @@ mod tests {
 
     #[test]
     fn deferred_rollover_unmappable_key_passes_through() {
-        setup();
+        let _guard = setup();
         let mut sm = sm(ActivationKey::Both);
         deferred_press_e(&mut sm);
         let a = sm.deferred_press(KeyInput::Other, None, false, false);
@@ -1082,7 +1087,7 @@ mod tests {
 
     #[test]
     fn deferred_selecting_cycles_with_wrap() {
-        setup();
+        let _guard = setup();
         let mut sm = sm(ActivationKey::Both);
         let variants = deferred_open_overlay(&mut sm);
         let n = variants.len();
@@ -1098,7 +1103,7 @@ mod tests {
 
     #[test]
     fn deferred_escape_replays_plain_letter() {
-        setup();
+        let _guard = setup();
         let mut sm = sm(ActivationKey::Both);
         deferred_open_overlay(&mut sm);
         let a = sm.deferred_press(KeyInput::Escape, Some(1), false, false);
@@ -1111,7 +1116,7 @@ mod tests {
 
     #[test]
     fn deferred_commit_injects_without_cooldown() {
-        setup();
+        let _guard = setup();
         let mut sm = sm(ActivationKey::Both);
         let variants = deferred_open_overlay(&mut sm);
         let a = sm.deferred_release(Some(E), false);
@@ -1124,7 +1129,7 @@ mod tests {
 
     #[test]
     fn deferred_selecting_swallows_unrelated_keys() {
-        setup();
+        let _guard = setup();
         let mut sm = sm(ActivationKey::Both);
         deferred_open_overlay(&mut sm);
         let a = sm.deferred_press(KeyInput::Other, Some(COMMA), false, false);

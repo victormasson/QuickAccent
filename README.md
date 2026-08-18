@@ -106,9 +106,11 @@ RUST_LOG=debug quickaccent
 journalctl --user -u quickaccent -f
 ```
 
-Runs as a background daemon. On Linux the overlay is centered (Wayland
-compositors block caret-relative placement) and rendered through XWayland so
-it never steals keyboard focus from the app you're typing in.
+Runs as a background daemon. On Linux the overlay renders through XWayland so
+it never steals keyboard focus, and on GNOME it opens centered on the window
+you are typing in (right monitor on multi-head setups) via a self-installed
+micro shell extension — log out/in once after install to activate it;
+without it the overlay is centered on the primary monitor.
 
 ## CI / releases
 

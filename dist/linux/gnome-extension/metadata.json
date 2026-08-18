@@ -1,0 +1,7 @@
+{
+  "uuid": "quickaccent-focus@victormasson.github.io",
+  "name": "QuickAccent Focused Window",
+  "description": "Exposes the focused window's frame rectangle over D-Bus so QuickAccent can show its accent picker on the monitor you are typing on. Installed automatically by QuickAccent.",
+  "shell-version": ["48", "49", "50", "51"],
+  "url": "https://github.com/victormasson/QuickAccent"
+}

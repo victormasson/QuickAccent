@@ -239,11 +239,11 @@ fn ensure_gnome_option(force_reload: bool) -> Option<bool> {
     Some(gsettings_set_options(&with))
 }
 
-/// Read a key from GNOME's input-sources schema. None = not GNOME (gsettings
-/// missing) or key unreadable.
-pub(crate) fn gsettings_get(key: &str) -> Option<String> {
+/// Read a GNOME setting. None = not GNOME (gsettings missing) or key
+/// unreadable.
+pub(crate) fn gsettings_get(schema: &str, key: &str) -> Option<String> {
     let out = std::process::Command::new("gsettings")
-        .args(["get", "org.gnome.desktop.input-sources", key])
+        .args(["get", schema, key])
         .output()
         .ok()?;
     out.status
@@ -251,29 +251,37 @@ pub(crate) fn gsettings_get(key: &str) -> Option<String> {
         .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
-pub(crate) fn gsettings_get_options() -> Option<Vec<String>> {
-    Some(parse_gvariant_string_list(&gsettings_get("xkb-options")?))
-}
-
-fn gsettings_set_options(options: &[String]) -> bool {
+/// Write a GNOME string-list setting.
+pub(crate) fn gsettings_set_list(schema: &str, key: &str, values: &[String]) -> bool {
     let value = format!(
         "[{}]",
-        options
+        values
             .iter()
-            .map(|o| format!("'{o}'"))
+            .map(|v| format!("'{v}'"))
             .collect::<Vec<_>>()
             .join(", ")
     );
     std::process::Command::new("gsettings")
-        .args(["set", "org.gnome.desktop.input-sources", "xkb-options"])
+        .args(["set", schema, key])
         .arg(&value)
         .status()
         .map(|s| s.success())
         .unwrap_or(false)
 }
 
+pub(crate) fn gsettings_get_options() -> Option<Vec<String>> {
+    Some(parse_gvariant_string_list(&gsettings_get(
+        "org.gnome.desktop.input-sources",
+        "xkb-options",
+    )?))
+}
+
+fn gsettings_set_options(options: &[String]) -> bool {
+    gsettings_set_list("org.gnome.desktop.input-sources", "xkb-options", options)
+}
+
 /// Parse a GVariant `as` value: `['a', 'b']` or `@as []`.
-fn parse_gvariant_string_list(text: &str) -> Vec<String> {
+pub(crate) fn parse_gvariant_string_list(text: &str) -> Vec<String> {
     text.split('\'')
         .skip(1)
         .step_by(2)

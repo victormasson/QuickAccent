@@ -516,6 +516,15 @@ mod platform {
                 inject_commit(ch, &mods.borrow());
             }
             if let Some(ge) = action.ui {
+                if matches!(ge, GrabEvent::ShowOverlay { .. }) {
+                    // Anchor the overlay on the window being typed in, so it
+                    // opens on the right monitor (needs the shell extension;
+                    // None keeps the primary-centered fallback).
+                    crate::app::set_overlay_anchor(
+                        crate::shell_ext::focused_window_rect()
+                            .map(|r| (r.x, r.y, r.width, r.height)),
+                    );
+                }
                 let _ = tx.send(ge);
             }
             if action.suppress {

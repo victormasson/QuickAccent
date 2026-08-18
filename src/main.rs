@@ -7,6 +7,8 @@ mod state_machine;
 #[cfg(target_os = "linux")]
 mod portal_keysym;
 #[cfg(target_os = "linux")]
+mod shell_ext;
+#[cfg(target_os = "linux")]
 mod virtual_kb;
 #[cfg(target_os = "linux")]
 mod xkb_custom;
@@ -70,6 +72,8 @@ fn main() -> iced::Result {
 #[cfg(target_os = "linux")]
 fn linux_setup() {
     setup_direct_typing();
+    // Lets the overlay open on the monitor being typed on (GNOME).
+    shell_ext::ensure_installed();
     if let Some(wl) = std::env::var_os("WAYLAND_DISPLAY") {
         injection::set_wayland_display(wl.clone());
         std::env::remove_var("WAYLAND_DISPLAY");

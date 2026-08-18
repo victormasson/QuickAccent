@@ -11,6 +11,15 @@ type LangData = &'static [(MappingKey, &'static [&'static str])];
 
 static COMPILED_MAP: RwLock<Option<HashMap<MappingKey, Vec<String>>>> = RwLock::new(None);
 
+/// COMPILED_MAP is process-global and some tests reload it destructively —
+/// every test touching mappings must hold this guard or parallel test runs
+/// are flaky.
+#[cfg(test)]
+pub(crate) fn test_guard() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 pub fn init(languages: &[String]) {
     let map = build_map(languages);
     *COMPILED_MAP.write().unwrap() = Some(map);
@@ -443,6 +452,7 @@ mod tests {
 
     #[test]
     fn french_e_has_accents() {
+        let _guard = test_guard();
         init(&["French".into()]);
         let v = get_variants(MappingKey::E, false);
         assert!(v.contains(&"é".into()));
@@ -452,6 +462,7 @@ mod tests {
 
     #[test]
     fn uppercase_variants() {
+        let _guard = test_guard();
         init(&["French".into()]);
         let v = get_variants(MappingKey::E, true);
         assert!(v.iter().any(|s| s == "É" || s.starts_with('É')));
@@ -460,6 +471,7 @@ mod tests {
 
     #[test]
     fn merge_languages_dedupes() {
+        let _guard = test_guard();
         init(&["French".into(), "Spanish".into()]);
         let v = get_variants(MappingKey::E, false);
         let mut seen = std::collections::HashSet::new();
@@ -472,6 +484,7 @@ mod tests {
 
     #[test]
     fn unknown_language_does_not_panic() {
+        let _guard = test_guard();
         init(&["NotARealLanguage".into()]);
         let v = get_variants(MappingKey::E, false);
         assert!(v.is_empty());
@@ -479,6 +492,7 @@ mod tests {
 
     #[test]
     fn reload_replaces_map() {
+        let _guard = test_guard();
         init(&["French".into()]);
         assert!(!get_variants(MappingKey::E, false).is_empty());
         reload(&["NotARealLanguage".into()]);
@@ -490,6 +504,7 @@ mod tests {
 
     #[test]
     fn key_without_entry_returns_empty() {
+        let _guard = test_guard();
         init(&["French".into()]);
         // W has no French entry in typical set
         let french_w = get_language_data("French")

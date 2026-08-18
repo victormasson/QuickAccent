@@ -20,6 +20,25 @@ fn window_width_for(count: usize) -> f32 {
     PADDING + (count as f32 * CELL_WIDTH)
 }
 
+/// Frame rect (x, y, w, h) of the window being typed in, set by the grab
+/// thread right before ShowOverlay — the overlay opens centered on it (i.e.
+/// on the monitor in use). None = center on the primary monitor.
+static OVERLAY_ANCHOR: Mutex<Option<(f32, f32, f32, f32)>> = Mutex::new(None);
+
+pub fn set_overlay_anchor(anchor: Option<(f32, f32, f32, f32)>) {
+    *OVERLAY_ANCHOR.lock().unwrap() = anchor;
+}
+
+fn overlay_position(width: f32) -> window::Position {
+    match *OVERLAY_ANCHOR.lock().unwrap() {
+        Some((x, y, w, h)) => window::Position::Specific(iced::Point::new(
+            x + (w - width) / 2.0,
+            y + (h - WINDOW_HEIGHT) / 2.0,
+        )),
+        None => window::Position::Centered,
+    }
+}
+
 fn overlay_settings(width: f32) -> window::Settings {
     #[allow(unused_mut)]
     let mut settings = window::Settings {
@@ -27,7 +46,7 @@ fn overlay_settings(width: f32) -> window::Settings {
         decorations: false,
         transparent: true,
         level: window::Level::AlwaysOnTop,
-        position: window::Position::Centered,
+        position: overlay_position(width),
         ..Default::default()
     };
     #[cfg(target_os = "linux")]

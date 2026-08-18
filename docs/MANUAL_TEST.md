@@ -29,6 +29,9 @@ The following needs a real desktop session (permissions + compositor).
 - [ ] **Hotplug**: connect a second keyboard (USB or Bluetooth) mid-session →
       suppression + accents work on it too
 - [ ] Without `input` group: clean error at startup, typing is NOT eaten
+- [ ] **Multi-monitor** (GNOME, after one re-login): overlay opens on the
+      monitor of the focused window; without the shell extension it stays
+      centered on the primary monitor
 - [ ] **AZERTY** (or non-QWERTY): accents match the character typed, not US physical key
 - [ ] Config hot-reload: edit `~/.config/quickaccent/config.toml` languages without restart
 

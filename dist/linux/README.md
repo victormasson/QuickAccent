@@ -65,6 +65,19 @@ systemctl --user restart quickaccent.service
 
 **Security:** `input` can read all keystrokes. Trusted accounts only.
 
+## Multi-monitor overlay (GNOME)
+
+Wayland hides window positions from apps, so QuickAccent self-installs a
+micro GNOME Shell extension (`quickaccent-focus@victormasson.github.io`,
+sources in `dist/linux/gnome-extension/`) that reports the focused window's
+rectangle over D-Bus. The picker then opens centered on the window you are
+typing in — i.e. on the right monitor. **Log out/in once** after the first
+run so GNOME loads the extension; until then (and on other desktops) the
+overlay is centered on the primary monitor. Remove it with
+`gnome-extensions disable quickaccent-focus@victormasson.github.io` and by
+deleting its directory under `~/.local/share/gnome-shell/extensions/`.
+Known limitation: with fractional display scaling the position can be offset.
+
 ## How typing works (macOS-style)
 
 - A letter with accent variants is held back until you release the key — it

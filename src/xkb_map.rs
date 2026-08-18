@@ -130,7 +130,7 @@ fn active_layout_variant() -> (String, String) {
 fn detect_gnome_layout() -> Option<(String, String)> {
     ["mru-sources", "sources"]
         .iter()
-        .filter_map(|key| crate::xkb_custom::gsettings_get(key))
+        .filter_map(|key| crate::xkb_custom::gsettings_get("org.gnome.desktop.input-sources", key))
         .find_map(|text| parse_gnome_source(&text))
 }
 
