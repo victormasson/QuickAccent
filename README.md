@@ -29,7 +29,7 @@ Prebuilt binaries, no Rust needed: the stable
 plus a rolling [`continuous`](https://github.com/victormasson/QuickAccent/releases/tag/continuous)
 prerelease rebuilt on every `master` push.
 
-### Linux (Wayland or X11; GNOME tested) — prebuilt, no Rust
+### Linux (Wayland or X11; GNOME and Hyprland/Omarchy) — prebuilt, no Rust
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/victormasson/QuickAccent/master/dist/linux/install.sh | bash
@@ -63,6 +63,14 @@ Notes:
   `~/.config/xkb/symbols/quickaccent`, and `systemctl --user disable --now quickaccent`.
 
 Details: [dist/linux/README.md](dist/linux/README.md).
+
+#### Omarchy / Hyprland
+
+The same command works. QuickAccent enables its keymap option with
+`hyprctl keyword input:kb_options` (applied instantly, `hyprland.conf` is not
+touched) and follows the focused window with `hyprctl activewindow`, so the
+picker opens on the monitor you are typing on. There is an optional bar widget
+for the Omarchy shell in [dist/omarchy/](dist/omarchy/).
 
 ### macOS (universal, no Rust)
 

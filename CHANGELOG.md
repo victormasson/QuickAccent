@@ -3,6 +3,27 @@
 All notable changes to QuickAccent are documented here.
 This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.1.0] - 2026-08-18
+
+Omarchy / Hyprland support.
+
+### Added
+
+- **Hyprland is a first-class desktop.** The keymap extension that makes
+  accents typeable on layouts without them (`é` on US) is now enabled with
+  `hyprctl keyword input:kb_options` instead of GNOME's gsettings. It applies
+  immediately — no re-login — and `hyprland.conf` is left untouched, because
+  QuickAccent re-applies the option on every start.
+- The keyboard layout and xkb options are read from Hyprland
+  (`input:kb_layout` / `kb_variant` / `kb_options`) when it is the compositor,
+  ahead of the GNOME and `localectl` sources.
+- The picker follows the focused window on Hyprland via
+  `hyprctl activewindow`, so it opens on the monitor being typed on. The GNOME
+  helper extension is no longer installed there.
+- An Omarchy bar-widget plugin (`dist/omarchy/`): shows whether the daemon is
+  armed and toggles it. Ready to publish to omarchyplugins.com.
+- `LICENSE` (MIT) — previously only declared in `Cargo.toml` and the README.
+
 ## [1.0.0] - 2026-08-18
 
 First stable release. QuickAccent brings macOS-style press-and-hold accent
@@ -64,4 +85,5 @@ release to insert.
 - The overlay is centered rather than placed at the caret — Wayland
   compositors do not expose caret position to applications.
 
+[1.1.0]: https://github.com/victormasson/QuickAccent/releases/tag/v1.1.0
 [1.0.0]: https://github.com/victormasson/QuickAccent/releases/tag/v1.0.0

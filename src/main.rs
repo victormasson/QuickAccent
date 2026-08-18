@@ -5,6 +5,8 @@ mod injection;
 mod mappings;
 mod state_machine;
 #[cfg(target_os = "linux")]
+mod hyprland;
+#[cfg(target_os = "linux")]
 mod portal_keysym;
 #[cfg(target_os = "linux")]
 mod shell_ext;

@@ -7,9 +7,11 @@
 //! (`quickaccent:accents`) that maps the accent characters onto spare
 //! keycodes no physical keyboard emits (F13–F23 + a few dead multimedia
 //! codes), with F24 acting as a virtual AltGr (`ISO_Level3_Shift`) so each
-//! key carries four characters. Adding the option to GNOME's
-//! `org.gnome.desktop.input-sources xkb-options` makes mutter recompile the
-//! keymap live. This is how tools like keyd type Unicode on Wayland.
+//! key carries four characters. The option is then enabled in whichever
+//! compositor is running — GNOME via `org.gnome.desktop.input-sources
+//! xkb-options`, Hyprland via `hyprctl keyword input:kb_options` — which
+//! makes it recompile the keymap live. This is how tools like keyd type
+//! Unicode on Wayland.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -83,7 +85,7 @@ pub fn ensure_installed(missing: &[char]) {
         return;
     }
 
-    match ensure_gnome_option(changed) {
+    match ensure_option_enabled(changed) {
         Some(true) => {
             ACTIVE.store(true, Ordering::SeqCst);
             if changed {
@@ -95,13 +97,14 @@ pub fn ensure_installed(missing: &[char]) {
             }
         }
         Some(false) => eprintln!(
-            "[QuickAccent] could not enable xkb option {OPTION_NAME} in GNOME settings"
+            "[QuickAccent] could not enable xkb option {OPTION_NAME} in the compositor"
         ),
-        // Not GNOME: files are in place; other desktops need the option added
-        // to their own xkb configuration.
+        // Unknown desktop: the files are in place, but only the user can
+        // point their compositor at the option.
         None => eprintln!(
-            "[QuickAccent] non-GNOME desktop: add the xkb option '{OPTION_NAME}' to your \
-             compositor's keyboard settings for direct accent typing"
+            "[QuickAccent] unsupported desktop: add the xkb option '{OPTION_NAME}' to your \
+             compositor's keyboard settings (Hyprland: input {{ kb_options = ...,{OPTION_NAME} }}) \
+             for direct accent typing"
         ),
     }
 }
@@ -212,6 +215,29 @@ fn ensure_rules() -> std::io::Result<()> {
 /// added, Some(false) on failure, None when gsettings isn't available (not
 /// GNOME). `force_reload` re-applies the option so mutter recompiles the
 /// keymap after the symbols file changed.
+/// Enable the option in whichever compositor is running. Some(true) when it
+/// is active, Some(false) when the attempt failed, None when the desktop is
+/// not one we know how to configure.
+fn ensure_option_enabled(force_reload: bool) -> Option<bool> {
+    if crate::hyprland::is_running() {
+        return ensure_hyprland_option(force_reload);
+    }
+    ensure_gnome_option(force_reload)
+}
+
+/// Hyprland owns its xkb config, so `hyprctl keyword` is the way in. It
+/// applies immediately (no re-login, unlike the GNOME extension path) and
+/// leaves hyprland.conf untouched — QuickAccent re-applies it every start.
+fn ensure_hyprland_option(force_reload: bool) -> Option<bool> {
+    let current = crate::hyprland::get_option("input:kb_options").unwrap_or_default();
+    let already = current.split(',').any(|o| o.trim() == OPTION_NAME);
+    if already && !force_reload {
+        return Some(true);
+    }
+    let merged = crate::hyprland::merge_option_list(&current, OPTION_NAME);
+    Some(crate::hyprland::set_option("input:kb_options", &merged))
+}
+
 fn ensure_gnome_option(force_reload: bool) -> Option<bool> {
     let current = gsettings_get_options()?;
     let has_option = current.iter().any(|o| o == OPTION_NAME);

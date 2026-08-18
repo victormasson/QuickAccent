@@ -25,6 +25,10 @@ pub struct Rect {
 /// login — until then `focused_window_rect` returns None and the overlay
 /// stays centered.
 pub fn ensure_installed() {
+    if crate::hyprland::is_running() {
+        // Hyprland answers window geometry over hyprctl — no helper needed.
+        return;
+    }
     let dir = extension_dir();
     let mut changed = false;
     for (name, content) in [("extension.js", EXTENSION_JS), ("metadata.json", METADATA_JSON)] {
@@ -77,8 +81,17 @@ fn extension_dir() -> PathBuf {
         .join(UUID)
 }
 
-/// Frame rect of the currently focused window, via the shell extension.
+/// Frame rect of the currently focused window, so the picker can open on
+/// the monitor being typed on.
 pub fn focused_window_rect() -> Option<Rect> {
+    if crate::hyprland::is_running() {
+        return crate::hyprland::active_window_rect();
+    }
+    gnome_focused_window_rect()
+}
+
+/// GNOME: via the helper shell extension (see `ensure_installed`).
+fn gnome_focused_window_rect() -> Option<Rect> {
     static CONN: Mutex<Option<zbus::blocking::Connection>> = Mutex::new(None);
     let mut guard = CONN.lock().unwrap();
     if guard.is_none() {

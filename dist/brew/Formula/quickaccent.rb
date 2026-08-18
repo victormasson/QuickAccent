@@ -41,9 +41,9 @@ class Quickaccent < Formula
         <key>CFBundlePackageType</key>
         <string>APPL</string>
         <key>CFBundleVersion</key>
-        <string>1.0.0</string>
+        <string>1.1.0</string>
         <key>CFBundleShortVersionString</key>
-        <string>1.0.0</string>
+        <string>1.1.0</string>
         <key>LSUIElement</key>
         <true/>
         <key>LSMinimumSystemVersion</key>

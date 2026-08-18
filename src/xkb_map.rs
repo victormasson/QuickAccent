@@ -75,6 +75,9 @@ fn active_options() -> Option<String> {
     if let Ok(opts) = std::env::var("XKB_DEFAULT_OPTIONS") {
         return Some(opts);
     }
+    if crate::hyprland::is_running() {
+        return crate::hyprland::get_option("input:kb_options");
+    }
     crate::xkb_custom::gsettings_get_options().map(|v| v.join(","))
 }
 
@@ -119,9 +122,25 @@ fn active_layout_variant() -> (String, String) {
     {
         return (layout, std::env::var("XKB_DEFAULT_VARIANT").unwrap_or_default());
     }
-    detect_gnome_layout()
+    detect_hyprland_layout()
+        .or_else(detect_gnome_layout)
         .or_else(|| detect_layout().map(|l| (l, String::new())))
         .unwrap_or_else(|| ("us".into(), String::new()))
+}
+
+/// Hyprland keeps the layout in its own config, e.g. `kb_layout = us,fr`.
+/// Like GNOME, the first entry is the one in use at startup.
+fn detect_hyprland_layout() -> Option<(String, String)> {
+    if !crate::hyprland::is_running() {
+        return None;
+    }
+    let first = |opt: &str| -> Option<String> {
+        crate::hyprland::get_option(opt)
+            .and_then(|v| v.split(',').next().map(|s| s.trim().to_string()))
+            .filter(|s| !s.is_empty())
+    };
+    let layout = first("input:kb_layout")?;
+    Some((layout, first("input:kb_variant").unwrap_or_default()))
 }
 
 /// First xkb source from GNOME's input-sources settings, e.g. "fr+oss" →
