@@ -8,7 +8,15 @@ ASSET="quickaccent-linux-x86_64.tar.gz"
 BIN_DIR="${PREFIX:-$HOME/.local}/bin"
 UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 APP_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd 2>/dev/null || true)"
+ICON_BASE="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor"
+# Piped to bash (curl | bash) there is no script file: BASH_SOURCE is unset,
+# which `set -u` would report as an error. No source tree then — the release
+# asset carries everything.
+if [[ -n "${BASH_SOURCE[0]:-}" ]]; then
+  ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd 2>/dev/null || true)"
+else
+  ROOT=""
+fi
 
 arch="$(uname -m)"
 if [[ "$arch" != "x86_64" && "$arch" != "amd64" ]]; then
@@ -46,6 +54,9 @@ build_from_source() {
   cp "$ROOT/dist/linux/quickaccent.service" "$tmpdir/pkg/" 2>/dev/null || true
   cp "$ROOT/dist/linux/quickaccent.desktop" "$tmpdir/pkg/" 2>/dev/null || true
   cp "$ROOT/dist/linux/60-quickaccent.rules" "$tmpdir/pkg/" 2>/dev/null || true
+  cp "$ROOT/assets/icon-app.svg" "$tmpdir/pkg/quickaccent.svg" 2>/dev/null || true
+  cp "$ROOT/assets/icon-app-256.png" "$tmpdir/pkg/quickaccent-256.png" 2>/dev/null || true
+  cp "$ROOT/assets/icon-app-512.png" "$tmpdir/pkg/quickaccent-512.png" 2>/dev/null || true
 }
 
 if [[ "${INSTALL_FROM_SOURCE:-0}" == "1" ]]; then
@@ -64,8 +75,31 @@ else
 fi
 
 echo "==> Install binary + desktop files"
-mkdir -p "$BIN_DIR" "$UNIT_DIR" "$APP_DIR"
+mkdir -p "$BIN_DIR" "$UNIT_DIR" "$APP_DIR" \
+  "$ICON_BASE/scalable/apps" "$ICON_BASE/256x256/apps" "$ICON_BASE/512x512/apps"
 install -m 755 "$PKG/quickaccent" "$BIN_DIR/quickaccent"
+
+ICON_INSTALLED=""
+if [[ -f "$PKG/quickaccent.svg" ]]; then
+  install -m 644 "$PKG/quickaccent.svg" "$ICON_BASE/scalable/apps/quickaccent.svg"
+  ICON_INSTALLED="$ICON_BASE/scalable/apps/quickaccent.svg"
+elif [[ -n "${ROOT:-}" && -f "$ROOT/assets/icon-app.svg" ]]; then
+  install -m 644 "$ROOT/assets/icon-app.svg" "$ICON_BASE/scalable/apps/quickaccent.svg"
+  ICON_INSTALLED="$ICON_BASE/scalable/apps/quickaccent.svg"
+fi
+if [[ -f "$PKG/quickaccent-256.png" ]]; then
+  install -m 644 "$PKG/quickaccent-256.png" "$ICON_BASE/256x256/apps/quickaccent.png"
+elif [[ -n "${ROOT:-}" && -f "$ROOT/assets/icon-app-256.png" ]]; then
+  install -m 644 "$ROOT/assets/icon-app-256.png" "$ICON_BASE/256x256/apps/quickaccent.png"
+fi
+if [[ -f "$PKG/quickaccent-512.png" ]]; then
+  install -m 644 "$PKG/quickaccent-512.png" "$ICON_BASE/512x512/apps/quickaccent.png"
+elif [[ -n "${ROOT:-}" && -f "$ROOT/assets/icon-app-512.png" ]]; then
+  install -m 644 "$ROOT/assets/icon-app-512.png" "$ICON_BASE/512x512/apps/quickaccent.png"
+fi
+if [[ -z "$ICON_INSTALLED" && -f "$ICON_BASE/256x256/apps/quickaccent.png" ]]; then
+  ICON_INSTALLED="$ICON_BASE/256x256/apps/quickaccent.png"
+fi
 
 if [[ -f "$PKG/quickaccent.service" ]]; then
   # Point ExecStart at installed binary
@@ -84,6 +118,11 @@ elif [[ -n "${ROOT:-}" && -f "$ROOT/dist/linux/quickaccent.desktop" ]]; then
 fi
 if [[ -n "$DESKTOP_SRC" ]]; then
   sed "s|^Exec=.*|Exec=$BIN_DIR/quickaccent|" "$DESKTOP_SRC" > "$APP_DIR/quickaccent.desktop"
+  if [[ -n "$ICON_INSTALLED" ]]; then
+    sed -i "s|^Icon=.*|Icon=$ICON_INSTALLED|" "$APP_DIR/quickaccent.desktop"
+  fi
+  gtk-update-icon-cache -f -t "$ICON_BASE" 2>/dev/null || true
+  update-desktop-database "$APP_DIR" 2>/dev/null || true
 fi
 
 RULE_SRC=""

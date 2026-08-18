@@ -14,16 +14,27 @@ pub fn setup_status_item() {
         let status_bar = NSStatusBar::systemStatusBar(nil);
         let status_item: id = msg_send![status_bar, statusItemWithLength: -1.0];
 
-        // Embed SVG and create NSImage
-        let icon_data = include_bytes!("../assets/icon.svg");
+        // Menu bar icon. NSImage cannot decode SVG data — only asset-catalog
+        // SVGs are supported — so this must be a raster image; an SVG here
+        // yields a nil image and an invisible status item. The PNG is a
+        // template (black + alpha), which macOS recolours to match light and
+        // dark menu bars automatically.
+        let icon_data = include_bytes!("../assets/menubar-template.png");
         let ns_data: id = msg_send![Class::get("NSData").unwrap(), dataWithBytes: icon_data.as_ptr() length: icon_data.len()];
         let ns_image: id = msg_send![NSImage::alloc(nil), initWithData: ns_data];
-        let size = cocoa::foundation::NSSize::new(18.0, 18.0);
-        let _: () = msg_send![ns_image, setSize: size];
-        let _: () = msg_send![ns_image, setTemplate: true];
 
         let button: id = msg_send![status_item, button];
-        let _: () = msg_send![button, setImage: ns_image];
+        if ns_image != nil {
+            // 36px artwork drawn at 18pt → crisp on Retina.
+            let size = cocoa::foundation::NSSize::new(18.0, 18.0);
+            let _: () = msg_send![ns_image, setSize: size];
+            let _: () = msg_send![ns_image, setTemplate: true];
+            let _: () = msg_send![button, setImage: ns_image];
+        } else {
+            // Never leave an invisible status item behind.
+            let fallback = NSString::alloc(nil).init_str("Q\u{304}");
+            let _: () = msg_send![button, setTitle: fallback];
+        }
 
         // Menu with Quit
         let menu = NSMenu::new(nil);

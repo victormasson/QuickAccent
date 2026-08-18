@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="q" x1="46" y1="36" x2="202" y2="230.16" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F4F4F4"/>
+      <stop offset="1" stop-color="#F0C400"/>
+    </linearGradient>
+    <linearGradient id="plate" x1="0" y1="0" x2="0" y2="256" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#3B3B3E"/>
+      <stop offset="1" stop-color="#1F1F22"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(22.53,22.53) scale(0.8240)">
+  <rect x="0" y="0" width="256" height="256" rx="56" ry="56" fill="url(#plate)"/>
+  <g transform="translate(32.20,25.19) scale(0.7726)">
+    <path fill="url(#q)" d="M71.5,36 h105 v15 h-105 Z"/>
+    <path fill="url(#q)" d="M143.63,176.74 L145.97,180.66 L148.31,184.45 L150.65,188.11 L153.00,191.63 L155.36,195.03 L157.73,198.29 L160.10,201.42 L162.49,204.42 L164.88,207.30 L167.28,210.04 L169.70,212.65 L172.13,215.13 L174.57,217.48 L177.03,219.69 L179.50,221.78 L182.00,223.73 L184.51,225.54 L187.05,227.22 L189.60,228.76 L192.18,230.16 L199.03,216.81 L197.06,215.74 L195.06,214.54 L193.05,213.21 L191.01,211.74 L188.96,210.13 L186.88,208.38 L184.79,206.50 L182.68,204.47 L180.56,202.31 L178.43,200.00 L176.28,197.55 L174.12,194.96 L171.96,192.23 L169.78,189.36 L167.60,186.35 L165.41,183.19 L163.21,179.90 L161.00,176.46 L158.79,172.88 L156.58,169.16 Z"/>
+    <path fill="url(#q)" fill-rule="evenodd" d="M202,140 A78,78 0 1 1 46,140 A78,78 0 1 1 202,140 Z M174,140 A50,50 0 1 0 74,140 A50,50 0 1 0 174,140 Z"/>
+  </g>
+  </g>
+</svg>

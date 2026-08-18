@@ -22,6 +22,7 @@ class Quickaccent < Formula
     (app/"Contents/MacOS").mkpath
     (app/"Contents/Resources").mkpath
     cp "target/release/quickaccent", app/"Contents/MacOS/quickaccent"
+    cp "dist/macos/AppIcon.icns", app/"Contents/Resources/AppIcon.icns"
 
     # Write minimal Info.plist (agent app, no Dock icon)
     (app/"Contents/Info.plist").write <<~PLIST
@@ -35,6 +36,8 @@ class Quickaccent < Formula
         <string>com.quickaccent.app</string>
         <key>CFBundleName</key>
         <string>QuickAccent</string>
+        <key>CFBundleIconFile</key>
+        <string>AppIcon</string>
         <key>CFBundlePackageType</key>
         <string>APPL</string>
         <key>CFBundleVersion</key>

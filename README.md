@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/icon.svg">
+    <img src="assets/icon-dark.svg" width="96" height="96" alt="QuickAccent">
+  </picture>
+</p>
+
 # QuickAccent
 
 Cross-platform accent picker for Linux and macOS, inspired by [PowerAccent](https://learn.microsoft.com/en-us/windows/powertoys/quick-accent) (PowerToys).

@@ -61,6 +61,9 @@ jobs:
           cp dist/linux/quickaccent.service "$STAGE/"
           cp dist/linux/quickaccent.desktop "$STAGE/"
           cp dist/linux/60-quickaccent.rules "$STAGE/"
+          cp assets/icon-app.svg "$STAGE/quickaccent.svg"
+          cp assets/icon-app-256.png "$STAGE/quickaccent-256.png"
+          cp assets/icon-app-512.png "$STAGE/quickaccent-512.png"
           tar -czf quickaccent-linux-x86_64.tar.gz "$STAGE"
 
       - uses: actions/upload-artifact@v4
@@ -100,6 +103,7 @@ jobs:
           cp quickaccent-universal "$APP/Contents/MacOS/quickaccent"
           chmod +x "$APP/Contents/MacOS/quickaccent"
           cp dist/macos/QuickAccent.app/Contents/Info.plist "$APP/Contents/Info.plist"
+          cp dist/macos/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
           tar -czf QuickAccent-macos-universal.tar.gz "$APP"
 
       - uses: actions/upload-artifact@v4

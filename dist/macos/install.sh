@@ -6,7 +6,14 @@ REPO="${GITHUB_REPO:-victormasson/QuickAccent}"
 RELEASE_TAG="${QUICKACCENT_VERSION:-continuous}"
 ASSET="QuickAccent-macos-universal.tar.gz"
 APP_DIR="${PREFIX:-$HOME/Applications}"
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd 2>/dev/null || true)"
+# Piped to bash (curl | bash) there is no script file: BASH_SOURCE is unset,
+# which `set -u` would report as an error. No source tree then — the release
+# asset carries everything.
+if [[ -n "${BASH_SOURCE[0]:-}" ]]; then
+  ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd 2>/dev/null || true)"
+else
+  ROOT=""
+fi
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "error: this installer is for macOS" >&2
@@ -37,6 +44,9 @@ build_from_source() {
   chmod +x "$APP/Contents/MacOS/quickaccent"
   if [[ -f "$ROOT/dist/macos/QuickAccent.app/Contents/Info.plist" ]]; then
     cp "$ROOT/dist/macos/QuickAccent.app/Contents/Info.plist" "$APP/Contents/Info.plist"
+  fi
+  if [[ -f "$ROOT/dist/macos/AppIcon.icns" ]]; then
+    cp "$ROOT/dist/macos/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
   fi
 }
 
