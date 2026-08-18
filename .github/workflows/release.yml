@@ -3,10 +3,12 @@ name: Release
 on:
   push:
     branches: [master]
+    tags: ["v*"]
   workflow_dispatch:
 
 concurrency:
-  group: release-continuous
+  # Keyed by ref so a tagged release never cancels a master build (or vice versa).
+  group: release-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -113,7 +115,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    name: publish-continuous
+    name: publish
     needs: [linux, macos]
     runs-on: ubuntu-latest
     steps:
@@ -127,17 +129,70 @@ jobs:
       - name: List artifacts
         run: ls -la artifacts/
 
+      # ---- tagged release (vX.Y.Z): the stable download users get ----
+      - name: Build release notes from CHANGELOG
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          awk -v ver="$VERSION" '
+            $0 ~ "^## \\[?" ver "\\]?" { found = 1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > RELEASE_NOTES.md || true
+          if [ ! -s RELEASE_NOTES.md ]; then
+            echo "QuickAccent ${GITHUB_REF_NAME}" > RELEASE_NOTES.md
+          fi
+          cat >> RELEASE_NOTES.md <<EOF
+
+          ## Install
+
+          \`\`\`bash
+          # Linux (Wayland or X11)
+          curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/master/dist/linux/install.sh | bash
+
+          # macOS (universal)
+          curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/master/dist/macos/install.sh | bash
+          \`\`\`
+
+          | File | Platform |
+          |------|----------|
+          | \`quickaccent-linux-x86_64.tar.gz\` | Linux x86_64 |
+          | \`QuickAccent-macos-universal.tar.gz\` | macOS universal (arm64 + x86_64) |
+          EOF
+          echo "--- release notes ---"; cat RELEASE_NOTES.md
+
+      - name: Publish tagged release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          prerelease: false
+          make_latest: true
+          body_path: RELEASE_NOTES.md
+          files: |
+            artifacts/quickaccent-linux-x86_64.tar.gz
+            artifacts/QuickAccent-macos-universal.tar.gz
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # ---- rolling build from master ----
       - name: Publish continuous release
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: continuous
           name: continuous
           prerelease: true
-          make_latest: true
+          # Stable tagged releases stay "Latest"; this is the rolling build.
+          make_latest: false
           overwrite_files: true
           generate_release_notes: false
           body: |
             Rolling build from `master` (updated on every push).
+
+            For the stable download see the [latest release](https://github.com/${{ github.repository }}/releases/latest).
 
             **Commit:** ${{ github.sha }}
             **Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

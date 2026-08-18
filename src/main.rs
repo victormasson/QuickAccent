@@ -22,8 +22,33 @@ use std::time::{Duration, Instant};
 
 use notify::{recommended_watcher, RecursiveMode, Watcher};
 
+const HELP: &str = "\
+QuickAccent \u{2014} hold a letter, press Space, pick an accent character.
+
+Usage: quickaccent [OPTIONS]
+
+Options:
+  -h, --help       Print this help
+  -V, --version    Print version
+
+Runs as a background daemon: no window is shown until the picker opens.
+Config: ~/.config/quickaccent/config.toml (hot-reloaded)
+Logs:   journalctl --user -u quickaccent -f
+";
+
 fn main() -> iced::Result {
     env_logger::init();
+
+    // Answer CLI flags before touching the config, display or input devices.
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|a| a == "--version" || a == "-V") {
+        println!("quickaccent {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        print!("{HELP}");
+        return Ok(());
+    }
 
     // Diagnostic mode: quickaccent --portal-probe [char]
     #[cfg(target_os = "linux")]

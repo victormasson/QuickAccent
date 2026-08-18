@@ -24,9 +24,10 @@ letters don't auto-repeat while held, exactly like macOS press-and-hold.
 
 ## Install
 
-Prebuilt binaries are published on every `master` push to the rolling
-[`continuous` release](https://github.com/victormasson/QuickAccent/releases/tag/continuous).
-Use that to avoid compiling on the laptop.
+Prebuilt binaries, no Rust needed: the stable
+[latest release](https://github.com/victormasson/QuickAccent/releases/latest),
+plus a rolling [`continuous`](https://github.com/victormasson/QuickAccent/releases/tag/continuous)
+prerelease rebuilt on every `master` push.
 
 ### Linux (Wayland or X11; GNOME tested) — prebuilt, no Rust
 
@@ -124,9 +125,14 @@ without it the overlay is centered on the primary monitor.
 | Workflow | When | Output |
 |----------|------|--------|
 | [CI](.github/workflows/ci.yml) | every push / PR | `cargo test` + release build (Linux + macOS) |
-| [Release](.github/workflows/release.yml) | push to `master` | Assets on [`continuous`](https://github.com/victormasson/QuickAccent/releases/tag/continuous) |
+| [Release](.github/workflows/release.yml) | push to `master` | Rolling assets on [`continuous`](https://github.com/victormasson/QuickAccent/releases/tag/continuous) (prerelease) |
+| [Release](.github/workflows/release.yml) | tag `v*` | Stable release, notes taken from [CHANGELOG.md](CHANGELOG.md) |
 
 Assets: `quickaccent-linux-x86_64.tar.gz`, `QuickAccent-macos-universal.tar.gz`.
+
+Cutting a release: update `CHANGELOG.md`, bump the version in `Cargo.toml`,
+`dist/macos/QuickAccent.app/Contents/Info.plist` and the brew formula, then
+`git tag vX.Y.Z && git push origin vX.Y.Z`.
 
 Unit tests cover the accent state machine, mappings, config, and helpers.  
 Desktop grab/inject: [docs/MANUAL_TEST.md](docs/MANUAL_TEST.md).
