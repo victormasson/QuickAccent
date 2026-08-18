@@ -3,7 +3,9 @@
 set -euo pipefail
 
 REPO="${GITHUB_REPO:-victormasson/QuickAccent}"
-RELEASE_TAG="${QUICKACCENT_VERSION:-continuous}"
+# Default: newest stable release. QUICKACCENT_VERSION=continuous pulls the
+# rolling build from master; or pin a tag such as v1.0.0.
+RELEASE_TAG="${QUICKACCENT_VERSION:-latest}"
 ASSET="quickaccent-linux-x86_64.tar.gz"
 BIN_DIR="${PREFIX:-$HOME/.local}/bin"
 UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
@@ -30,7 +32,12 @@ cleanup() { rm -rf "$tmpdir"; }
 trap cleanup EXIT
 
 fetch_release() {
-  local url="https://github.com/${REPO}/releases/download/${RELEASE_TAG}/${ASSET}"
+  local url
+  if [[ "$RELEASE_TAG" == "latest" ]]; then
+    url="https://github.com/${REPO}/releases/latest/download/${ASSET}"
+  else
+    url="https://github.com/${REPO}/releases/download/${RELEASE_TAG}/${ASSET}"
+  fi
   echo "==> Download $url"
   if command -v curl >/dev/null 2>&1; then
     curl -fsSL "$url" -o "$tmpdir/$ASSET"

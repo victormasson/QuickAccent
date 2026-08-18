@@ -3,7 +3,9 @@
 set -euo pipefail
 
 REPO="${GITHUB_REPO:-victormasson/QuickAccent}"
-RELEASE_TAG="${QUICKACCENT_VERSION:-continuous}"
+# Default: newest stable release. QUICKACCENT_VERSION=continuous pulls the
+# rolling build from master; or pin a tag such as v1.0.0.
+RELEASE_TAG="${QUICKACCENT_VERSION:-latest}"
 ASSET="QuickAccent-macos-universal.tar.gz"
 APP_DIR="${PREFIX:-$HOME/Applications}"
 # Piped to bash (curl | bash) there is no script file: BASH_SOURCE is unset,
@@ -25,7 +27,12 @@ cleanup() { rm -rf "$tmpdir"; }
 trap cleanup EXIT
 
 fetch_release() {
-  local url="https://github.com/${REPO}/releases/download/${RELEASE_TAG}/${ASSET}"
+  local url
+  if [[ "$RELEASE_TAG" == "latest" ]]; then
+    url="https://github.com/${REPO}/releases/latest/download/${ASSET}"
+  else
+    url="https://github.com/${REPO}/releases/download/${RELEASE_TAG}/${ASSET}"
+  fi
   echo "==> Download $url"
   curl -fsSL "$url" -o "$tmpdir/$ASSET"
 }

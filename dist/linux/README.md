@@ -1,10 +1,12 @@
 # QuickAccent on Linux
 
-## Install from CI (prebuilt, no Rust)
+## Install (prebuilt, no Rust)
 
-Every push to `master` publishes `quickaccent-linux-x86_64.tar.gz` on the
-rolling [`continuous`](https://github.com/victormasson/QuickAccent/releases/tag/continuous)
-release.
+The installer downloads `quickaccent-linux-x86_64.tar.gz` from the newest
+[stable release](https://github.com/victormasson/QuickAccent/releases/latest).
+Set `QUICKACCENT_VERSION=continuous` for the
+[rolling build](https://github.com/victormasson/QuickAccent/releases/tag/continuous)
+from `master`, or pin a tag such as `v1.0.0`.
 
 ```bash
 # Fedora / GNOME Wayland
@@ -25,7 +27,7 @@ From a clone (still downloads the CI asset, does not compile):
 | Env | Default | Meaning |
 |-----|---------|---------|
 | `GITHUB_REPO` | `victormasson/QuickAccent` | Repo for assets |
-| `QUICKACCENT_VERSION` | `continuous` | Release tag |
+| `QUICKACCENT_VERSION` | `latest` | Release tag (`continuous` = rolling build) |
 | `PREFIX` | `~/.local` | Install prefix (`bin/`) |
 | `INSTALL_FROM_SOURCE` | `0` | Set `1` to `cargo build` instead |
 
