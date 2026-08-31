@@ -484,19 +484,6 @@ where
     Ok(res)
 }
 
-fn epoll_watch_all<'a, T>(device_files: T) -> io::Result<RawFd>
-where
-    T: Iterator<Item = &'a File>,
-{
-    let epoll_fd = epoll::create(true)?;
-    // add file descriptors to epoll
-    for (file_idx, file) in device_files.enumerate() {
-        let epoll_event = epoll::Event::new(EPOLLIN, file_idx as u64);
-        epoll::ctl(epoll_fd, EPOLL_CTL_ADD, file.as_raw_fd(), epoll_event)?;
-    }
-    Ok(epoll_fd)
-}
-
 fn inotify_devices() -> io::Result<Inotify> {
     let mut inotify = Inotify::init()?;
     inotify.add_watch(DEV_PATH, WatchMask::CREATE)?;
@@ -560,6 +547,9 @@ fn add_device_to_epoll_from_inotify_event(
     let Ok(mut device) = Device::new_from_fd(file) else {
         return;
     };
+    if !is_keyboard_device(&device) {
+        return;
+    }
     let Ok(out_device) = UInputDevice::create_from_device(&device) else {
         return;
     };
@@ -586,17 +576,49 @@ fn is_uinput_device(name: &OsStr) -> bool {
         .unwrap_or(false)
 }
 
+// QuickAccent patch: only grab keyboards.
+//
+// Stock rdev grabs (and clones through uinput) every node under /dev/input:
+// mice, touchpads, jack-detection switches, power/sleep buttons, vendor
+// hotkey devices — and the ACPI "Lid Switch". Exclusively grabbing the lid
+// switch hides it from systemd-logind and UPower, which then only see the
+// lid through our clone: the clone starts "open" whatever the real lid does,
+// and any edge lost across a restart leaves it stuck. On GNOME that showed
+// up as mutter refusing to light the laptop panel ("Refusing to activate a
+// closed laptop panel") or never turning it off when the lid was closed.
+// QuickAccent only ever needs letter keys, so require a real alphabetic
+// keyboard and refuse anything that carries switches.
+fn is_keyboard_device(device: &Device) -> bool {
+    device.has_event_type(&evdev_rs::enums::EventType::EV_KEY)
+        && !device.has_event_type(&evdev_rs::enums::EventType::EV_SW)
+        && device.has_event_code(&EventCode::EV_KEY(EV_KEY::KEY_A))
+        && device.has_event_code(&EventCode::EV_KEY(EV_KEY::KEY_Z))
+}
+
 /// Returns tuple of epoll_fd, all devices, and uinput devices, where
 /// uinputdevices is the same length as devices, and each uinput device is
 /// a libevdev copy of its corresponding device.The epoll_fd is level-triggered
 /// on any available data in the original devices.
 fn setup_devices() -> io::Result<(RawFd, Vec<Device>, Vec<UInputDevice>)> {
     let device_files = get_device_files(DEV_PATH)?;
-    let epoll_fd = epoll_watch_all(device_files.iter())?;
-    let devices = device_files
-        .into_iter()
-        .map(Device::new_from_fd)
-        .collect::<io::Result<Vec<Device>>>()?;
+    // QuickAccent patch: build the libevdev handle first so non-keyboards can
+    // be dropped (closing their fd) before anything is grabbed or watched.
+    let mut fds = Vec::new();
+    let mut devices = Vec::new();
+    for file in device_files {
+        let fd = file.as_raw_fd();
+        let device = Device::new_from_fd(file)?;
+        if !is_keyboard_device(&device) {
+            continue;
+        }
+        fds.push(fd);
+        devices.push(device);
+    }
+    let epoll_fd = epoll::create(true)?;
+    for (file_idx, fd) in fds.iter().enumerate() {
+        let epoll_event = epoll::Event::new(EPOLLIN, file_idx as u64);
+        epoll::ctl(epoll_fd, EPOLL_CTL_ADD, *fd, epoll_event)?;
+    }
     let output_devices = devices
         .iter()
         .map(UInputDevice::create_from_device)
