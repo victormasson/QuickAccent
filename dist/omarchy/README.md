@@ -33,11 +33,29 @@ Then add the QuickAccent widget to your bar from the Omarchy bar settings.
 
 Characters your keyboard layout cannot produce (`é` on a US layout) are added
 to the keymap at startup: QuickAccent generates the xkb option
-`quickaccent:accents` in `~/.config/xkb` and enables it with
-`hyprctl keyword input:kb_options …`, which Hyprland applies immediately.
-Accents are then ordinary keystrokes sent through a uinput virtual keyboard —
-no clipboard, no portal prompt, works in terminals and Electron apps alike.
-Your `hyprland.conf` is not modified; the option is re-applied on each start.
+`quickaccent:accents` in `~/.config/xkb` and enables it at runtime — through
+`hyprctl eval 'hl.config({ input = { kb_options = "…" } })'` on Omarchy 4's Lua
+config, or `hyprctl keyword` on a legacy config — keeping your existing
+`kb_options` and confirming the result by reading it back. Accents are then
+ordinary keystrokes sent through a uinput virtual keyboard — no clipboard, no
+portal prompt, works in terminals and Electron apps alike. Your config files
+are not modified; the option is re-applied on each start and after every
+`configreloaded` (Omarchy reloads Hyprland on theme changes).
+
+If you prefer it in your own config, add it to `~/.config/hypr/input.lua`,
+repeating the options you already have (the Lua config replaces the value):
+
+```lua
+hl.config({
+  input = {
+    kb_options = "compose:caps,shift:both_capslock_cancel,quickaccent:accents",
+  },
+})
+```
+
+Note: `xdg-desktop-portal-hyprland` implements no `RemoteDesktop` portal, so
+the keymap option is the only direct-typing route on Hyprland; without it
+QuickAccent falls back to clipboard paste.
 
 The picker opens centred on the focused window (`hyprctl activewindow`), so it
 appears on the monitor you are typing on.

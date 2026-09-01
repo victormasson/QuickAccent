@@ -47,8 +47,9 @@ characters are typed as ordinary keystrokes through uinput. Remove with
 `gsettings reset org.gnome.desktop.input-sources xkb-options` (restores your
 previous options minus ours) and delete `~/.config/xkb/symbols/quickaccent`.
 
-Do not also enable the desktop autostart entry if the systemd user unit is
-on — two instances fight over the evdev grab (`Device or resource busy`).
+Only one instance runs at a time: a second launch (autostart entry, app-grid
+click) exits with "already running", and the systemd service always wins over
+a manually started copy.
 
 ```bash
 journalctl --user -u quickaccent -f

@@ -372,6 +372,47 @@ mod platform {
         }
     }
 
+    /// Keep the virtual keyboard's modifier state in lockstep with the
+    /// physical one. Hyprland tracks modifiers per keyboard device and reports
+    /// the *emitting* device's state to clients, so a letter replayed through
+    /// our device while Shift is held on the physical one comes out lowercase
+    /// (issue #9: "uPeRcaseS" — vowels are the replayed keys). Mirroring the
+    /// matched press/release pairs, in order, is a no-op where state is merged
+    /// (mutter) and correct where it is per device. Caps Lock is deliberately
+    /// excluded: its xkb action toggles on press, so a mirrored second press
+    /// would undo it on merged-state compositors.
+    fn mirror_modifier(code: Option<u16>, pressed: bool, is_repeat: bool) {
+        if is_repeat {
+            return;
+        }
+        if let Some(c) = code {
+            let ev = if pressed { KeyEvt::Press(c) } else { KeyEvt::Release(c) };
+            if let Err(e) = virtual_kb::emit(&[ev]) {
+                eprintln!("[QuickAccent] modifier mirror failed: {e}");
+            }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        /// `Mods::update` defines exactly the set that gets mirrored.
+        #[test]
+        fn mirrored_modifier_set_excludes_capslock_and_letters() {
+            let mut m = Mods::default();
+            for k in [
+                Key::ShiftLeft, Key::ShiftRight, Key::ControlLeft, Key::ControlRight,
+                Key::Alt, Key::AltGr, Key::MetaLeft, Key::MetaRight,
+            ] {
+                assert!(m.update(k, true), "{k:?} must be tracked/mirrored");
+            }
+            assert!(!m.update(Key::CapsLock, true), "CapsLock must never be mirrored");
+            assert!(!m.update(Key::KeyE, true));
+            assert!(!m.update(Key::Space, true));
+        }
+    }
+
     /// Type the committed accent character, most direct mechanism first:
     /// 1. uinput key combo — char exists in the active keyboard layout;
     /// 2. portal keysym — direct Unicode injection by the compositor
@@ -480,6 +521,7 @@ mod platform {
             // switching in the overlay); other modifiers fall through to the
             // state machine so a chord during LetterHeld replays the letter.
             if matches!(key, Key::ShiftLeft | Key::ShiftRight) {
+                mirror_modifier(code, pressed, is_repeat);
                 let shift = mods.borrow().shift();
                 if let Some(ge) = state.borrow_mut().update_shift(shift) {
                     let _ = tx.send(ge);
@@ -514,6 +556,12 @@ mod platform {
             }
             if let Some(ch) = &action.inject {
                 inject_commit(ch, &mods.borrow());
+            }
+            if is_modifier && !action.suppress {
+                // Ctrl/Alt/Meta/AltGr passing through: keep the virtual
+                // keyboard's state in step (suppressed ones were already
+                // emitted virtually by the rollover path).
+                mirror_modifier(code, pressed, is_repeat);
             }
             if let Some(ge) = action.ui {
                 if matches!(ge, GrabEvent::ShowOverlay { .. }) {

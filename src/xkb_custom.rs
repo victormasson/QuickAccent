@@ -9,7 +9,8 @@
 //! codes), with F24 acting as a virtual AltGr (`ISO_Level3_Shift`) so each
 //! key carries four characters. The option is then enabled in whichever
 //! compositor is running — GNOME via `org.gnome.desktop.input-sources
-//! xkb-options`, Hyprland via `hyprctl keyword input:kb_options` — which
+//! xkb-options`, Hyprland via `hyprctl eval`/`keyword` on `input:kb_options`
+//! (verified by reading the value back) — which
 //! makes it recompile the keymap live. This is how tools like keyd type
 //! Unicode on Wayland.
 
@@ -229,13 +230,49 @@ fn ensure_option_enabled(force_reload: bool) -> Option<bool> {
 /// applies immediately (no re-login, unlike the GNOME extension path) and
 /// leaves hyprland.conf untouched — QuickAccent re-applies it every start.
 fn ensure_hyprland_option(force_reload: bool) -> Option<bool> {
-    let current = crate::hyprland::get_option("input:kb_options").unwrap_or_default();
-    let already = current.split(',').any(|o| o.trim() == OPTION_NAME);
-    if already && !force_reload {
+    const OPT: &str = "input:kb_options";
+    let has = |v: &str| v.split(',').any(|o| o.trim() == OPTION_NAME);
+    let current = crate::hyprland::get_option(OPT).unwrap_or_default();
+    if has(&current) && !force_reload {
         return Some(true);
     }
     let merged = crate::hyprland::merge_option_list(&current, OPTION_NAME);
-    Some(crate::hyprland::set_option("input:kb_options", &merged))
+    if has(&current) {
+        // Our symbols changed: take the option away first so the compositor
+        // recompiles the keymap when it comes back. Skipped when nothing else
+        // would remain — Hyprland mishandles an empty kb_options
+        // (hyprwm/Hyprland#4994).
+        let without: Vec<&str> = current
+            .split(',')
+            .map(str::trim)
+            .filter(|o| !o.is_empty() && *o != OPTION_NAME)
+            .collect();
+        if !without.is_empty() {
+            crate::hyprland::set_option(OPT, &without.join(","));
+        }
+    }
+    let accepted = crate::hyprland::set_option(OPT, &merged);
+    // Only the read-back counts: `hyprctl` exits 0 even when the compositor
+    // rejected the command (Lua config vs `keyword`, issue #9).
+    let active = crate::hyprland::get_option(OPT)
+        .map(|v| has(&v))
+        .unwrap_or(false);
+    if !active {
+        eprintln!(
+            "[QuickAccent] Hyprland did not apply the xkb option {OPTION_NAME} \
+             (command accepted: {accepted}). Accents outside your layout use the \
+             fallback path until it is enabled. To enable it permanently, {}",
+            crate::hyprland::persistent_hint(OPT, &merged)
+        );
+    }
+    Some(active)
+}
+
+/// The one-line fix a Hyprland user can apply by hand, current options kept.
+pub fn hyprland_enable_hint() -> String {
+    let current = crate::hyprland::get_option("input:kb_options").unwrap_or_default();
+    let merged = crate::hyprland::merge_option_list(&current, OPTION_NAME);
+    crate::hyprland::persistent_hint("input:kb_options", &merged)
 }
 
 fn ensure_gnome_option(force_reload: bool) -> Option<bool> {

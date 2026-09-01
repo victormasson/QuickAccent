@@ -65,6 +65,30 @@ pub fn start() {
     });
 }
 
+/// Whether any portal backend implements RemoteDesktop. xdg-desktop-portal
+/// only exports the interface when an implementation exists — on Hyprland
+/// (xdg-desktop-portal-hyprland) it does not, so this tier is a dead end
+/// there and must not be offered as a remedy (issue #9).
+pub fn available() -> bool {
+    let Ok(conn) = zbus::blocking::Connection::session() else {
+        return false;
+    };
+    conn.call_method(
+        Some("org.freedesktop.portal.Desktop"),
+        "/org/freedesktop/portal/desktop",
+        Some("org.freedesktop.DBus.Properties"),
+        "Get",
+        &("org.freedesktop.portal.RemoteDesktop", "version"),
+    )
+    .is_ok()
+}
+
+fn is_gnome() -> bool {
+    std::env::var("XDG_CURRENT_DESKTOP")
+        .map(|d| d.to_ascii_uppercase().contains("GNOME"))
+        .unwrap_or(false)
+}
+
 /// Type `text` directly (keysym press/release per char). Blocking, called
 /// from the grab thread — while it blocks, physical events queue in the
 /// kernel, which keeps injected chars ordered before the user's next
@@ -125,11 +149,17 @@ async fn run() {
         }
         Err(e) => {
             STATE.store(STATE_FAILED, Ordering::SeqCst);
+            let remedy = if is_gnome() {
+                "To enable direct typing, restart QuickAccent and accept the one-time\n\
+                 input-sharing dialog (GNOME remembers it permanently)."
+            } else {
+                "This desktop has no RemoteDesktop portal backend; enabling the keymap\n\
+                 option is the way to get direct typing (see the lines above)."
+            };
             eprintln!(
                 "[QuickAccent] portal input unavailable ({e}).\n\
-                 Characters outside your keyboard layout will use the clipboard fallback.\n\
-                 To enable direct typing, restart QuickAccent and accept the one-time\n\
-                 input-sharing dialog (GNOME remembers it permanently)."
+                 Characters outside your keyboard layout will use the clipboard fallback\n\
+                 (Ctrl+V — terminals treat it literally).\n{remedy}"
             );
             // Keep answering so callers fail fast instead of timing out.
             while let Some(req) = rx.recv().await {

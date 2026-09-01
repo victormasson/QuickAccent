@@ -66,6 +66,10 @@ fn main() -> iced::Result {
         }
     }
 
+    if !acquire_single_instance_lock() {
+        return Ok(());
+    }
+
     let config = config::load_config();
     mappings::init(&config.languages);
 
@@ -101,6 +105,11 @@ fn linux_setup() {
     setup_direct_typing();
     // Lets the overlay open on the monitor being typed on (GNOME).
     shell_ext::ensure_installed();
+    if hyprland::is_running() {
+        // Omarchy reloads Hyprland's config on every theme change, which
+        // drops runtime-set options — put ours back each time.
+        hyprland::watch_config_reloads(setup_direct_typing);
+    }
     if let Some(wl) = std::env::var_os("WAYLAND_DISPLAY") {
         injection::set_wayland_display(wl.clone());
         std::env::remove_var("WAYLAND_DISPLAY");
@@ -135,13 +144,104 @@ fn setup_direct_typing() {
         .filter(|&c| xkb_map::combo_for_char(c).is_none())
         .collect();
     if !still_missing.is_empty() {
+        let sample: String = still_missing.iter().take(5).collect();
+        if portal_keysym::available() {
+            eprintln!(
+                "[QuickAccent] {} characters still not typeable via the keymap \
+                 (e.g. {sample:?}) — starting portal injection",
+                still_missing.len()
+            );
+            portal_keysym::start();
+        } else {
+            // No RemoteDesktop backend (Hyprland's portal has none): don't send
+            // the user to a dead end — tell them what actually works here.
+            let hint = if hyprland::is_running() {
+                xkb_custom::hyprland_enable_hint()
+            } else {
+                format!(
+                    "add the xkb option '{}' to your compositor's keyboard options",
+                    xkb_custom::OPTION_NAME
+                )
+            };
+            eprintln!(
+                "[QuickAccent] {} characters still not typeable via the keymap \
+                 (e.g. {sample:?}) and this desktop has no RemoteDesktop portal \
+                 backend — they will use the clipboard fallback (Ctrl+V; terminals \
+                 treat it literally). To type them directly, {hint}",
+                still_missing.len()
+            );
+        }
+    }
+}
+
+/// Refuse to run twice. A second instance — typically the app-grid icon
+/// clicked while the systemd service is running — would lose the evdev grab
+/// race with a silent EBUSY and leave everyone confused about which copy is
+/// live. When the *service* starts and finds a stray holding the lock, the
+/// service wins: the stray is asked to quit (same user, same binary).
+fn acquire_single_instance_lock() -> bool {
+    use std::io::Write;
+
+    let dir = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    let path = dir.join("quickaccent.lock");
+    let Ok(file) = std::fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(false)
+        .open(&path)
+    else {
+        return true; // can't lock → don't block startup over it
+    };
+
+    let mut attempts = 0;
+    loop {
+        match file.try_lock() {
+            Ok(()) => {
+                let _ = file.set_len(0);
+                let _ = write!(&file, "{}", std::process::id());
+                std::mem::forget(file); // held for the life of the process
+                return true;
+            }
+            Err(std::fs::TryLockError::WouldBlock) => {}
+            Err(_) => return true,
+        }
+        let holder = std::fs::read_to_string(&path).unwrap_or_default().trim().to_string();
+        let running_as_service = std::env::var_os("INVOCATION_ID").is_some();
+        if running_as_service && attempts < 10 {
+            if attempts == 0 {
+                eprintln!(
+                    "[QuickAccent] another instance (PID {holder}) holds the input grab; \
+                     the service takes over — asking it to quit."
+                );
+                terminate_own_instance(&holder);
+            }
+            attempts += 1;
+            std::thread::sleep(Duration::from_millis(300));
+            continue;
+        }
         eprintln!(
-            "[QuickAccent] {} characters still not typeable via the keymap \
-             (e.g. {:?}) — starting portal injection",
-            still_missing.len(),
-            still_missing.iter().take(5).collect::<String>()
+            "[QuickAccent] already running (PID {holder}) — nothing to do.\n{}",
+            if cfg!(target_os = "macos") {
+                "Quit it from the menu bar icon first if you want to restart it."
+            } else {
+                "Manage it with: systemctl --user restart quickaccent"
+            }
         );
-        portal_keysym::start();
+        return false;
+    }
+}
+
+/// SIGTERM `pid` only if it really is a quickaccent process of ours.
+fn terminate_own_instance(pid: &str) {
+    if pid.parse::<u32>().is_err() {
+        return;
+    }
+    let exe = std::fs::read_link(format!("/proc/{pid}/exe")).unwrap_or_default();
+    if exe.file_name().and_then(|n| n.to_str()) == Some("quickaccent") {
+        let _ = std::process::Command::new("kill").arg(pid).status();
     }
 }
 

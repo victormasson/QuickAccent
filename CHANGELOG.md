@@ -3,6 +3,41 @@
 All notable changes to QuickAccent are documented here.
 This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.1.1] - Unreleased
+
+Fixes for Omarchy 4 / Hyprland reported in
+[#9](https://github.com/victormasson/QuickAccent/issues/9).
+
+### Fixed
+
+- **Keymap option silently not enabled on Hyprland with a Lua config.**
+  `hyprctl keyword` is rejected by the non-legacy parser ("Use eval") while
+  `hyprctl` still exits 0, so the daemon believed the option was active and
+  fell through to the clipboard path without a word. The option is now set
+  with `hyprctl eval 'hl.config({ … })'` on Lua configs (`keyword` on legacy
+  ones, each falling back to the other), the user's existing `kb_options` are
+  carried forward, and success is decided solely by reading the value back.
+  On failure the exact `input.lua` line — with the merged value — is logged.
+- **Option lost on config reload.** Omarchy reloads Hyprland on every theme
+  change, dropping runtime-set options. QuickAccent now watches Hyprland's
+  event socket and re-applies the option after each `configreloaded`.
+- **Dead-end portal advice.** The RemoteDesktop tier is only started when a
+  portal backend actually implements it (Hyprland's does not); otherwise the
+  log names the fallback in use and the keymap fix that applies to this
+  desktop. The "accept the dialog" hint is GNOME-only now.
+- **Lost Shift on accent-capable letters (Hyprland).** Letters QuickAccent
+  replays go through its own virtual keyboard; Hyprland reports the emitting
+  device's modifier state, so with Shift held on the physical keyboard the
+  replayed vowels came out lowercase (`uPeRcaseS`). Shift/Ctrl/Alt/Meta/AltGr
+  events are now mirrored onto the virtual keyboard as they pass through. Caps
+  Lock is intentionally not mirrored (its action toggles on press); Caps Lock
+  with accent letters on Hyprland remains a known gap.
+- **Duplicate instances.** Launching QuickAccent from the app grid while the
+  systemd service runs produced a second copy that silently lost the evdev
+  grab (`EBUSY`), and the two were indistinguishable. A second instance now
+  exits with "already running"; when the service itself starts and finds a
+  stray holding the lock, it asks the stray to quit and takes over.
+
 ## [1.1.0] - 2026-08-18
 
 Omarchy / Hyprland support.
@@ -85,5 +120,6 @@ release to insert.
 - The overlay is centered rather than placed at the caret — Wayland
   compositors do not expose caret position to applications.
 
+[1.1.1]: https://github.com/victormasson/QuickAccent/releases/tag/v1.1.1
 [1.1.0]: https://github.com/victormasson/QuickAccent/releases/tag/v1.1.0
 [1.0.0]: https://github.com/victormasson/QuickAccent/releases/tag/v1.0.0
