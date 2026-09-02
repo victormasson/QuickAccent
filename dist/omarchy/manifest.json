@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.victormasson.quickaccent",
   "name": "QuickAccent",
-  "version": "1.0.0",
+  "version": "1.1.1",
   "author": "Victor Masson",
   "license": "MIT",
   "description": "Hold a letter, press Space, pick an accent character. Types é è ê directly on a US keyboard.",

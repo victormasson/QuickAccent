@@ -128,6 +128,10 @@ pub fn ensure_overlay_no_focus() {
     if !is_running() {
         return;
     }
+    // Try the running config's own parser first, fall back to the other.
+    // The branches look identical to clippy but the `||` order is the point:
+    // short-circuit means "prefer this parser".
+    #[allow(clippy::if_same_then_else)]
     let applied = if uses_lua_config() {
         set_overlay_no_focus_lua() || set_overlay_no_focus_legacy()
     } else {

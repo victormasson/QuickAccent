@@ -3,7 +3,7 @@
 All notable changes to QuickAccent are documented here.
 This project adheres to [Semantic Versioning](https://semver.org/).
 
-## [1.1.1] - Unreleased
+## [1.1.1] - 2026-09-02
 
 Fixes for Omarchy 4 / Hyprland reported in
 [#9](https://github.com/victormasson/QuickAccent/issues/9).
@@ -44,6 +44,12 @@ Fixes for Omarchy 4 / Hyprland reported in
   portal backend actually implements it (Hyprland's does not); otherwise the
   log names the fallback in use and the keymap fix that applies to this
   desktop. The "accept the dialog" hint is GNOME-only now.
+- **Accents committed into the picker instead of the app (Hyprland).** The
+  overlay is a native-Wayland toplevel, so its X11 `override_redirect`
+  focus-proofing did nothing on Hyprland — the compositor gave the overlay
+  keyboard focus and the accent landed in it, not your document. QuickAccent
+  now sets a `no_focus` window rule for the overlay via `hyprctl`, at startup
+  and on every config reload. GNOME is unaffected (overlay runs on XWayland).
 - **Lost Shift on accent-capable letters (Hyprland).** Letters QuickAccent
   replays go through its own virtual keyboard; Hyprland reports the emitting
   device's modifier state, so with Shift held on the physical keyboard the
