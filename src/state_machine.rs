@@ -97,13 +97,16 @@ pub enum AccentState {
         code: u16,
         /// shift state when the key was pressed (deferred mode)
         shift_at_press: bool,
-        variants: Vec<String>,
         held_since: Instant,
     },
     Selecting {
         key: MappingKey,
         /// evdev code of the physical key (deferred mode; 0 on macOS)
         code: u16,
+        /// Latched case: set when Shift was involved (held at the letter
+        /// press or when the picker opened), toggled by later Shift
+        /// presses, never cleared by a Shift release.
+        uppercase: bool,
         variants: Vec<String>,
         selected_index: usize,
         held_since: Instant,
@@ -155,19 +158,16 @@ impl StateMachine {
     }
 
     fn try_enter_letter_held(&mut self, mk: MappingKey, code: u16, shift_held: bool) -> bool {
-        let variants = crate::mappings::get_variants(mk, shift_held);
-        if !variants.is_empty() {
-            self.state = AccentState::LetterHeld {
-                key: mk,
-                code,
-                shift_at_press: shift_held,
-                variants,
-                held_since: Instant::now(),
-            };
-            true
-        } else {
-            false
+        if crate::mappings::get_variants(mk, shift_held).is_empty() {
+            return false;
         }
+        self.state = AccentState::LetterHeld {
+            key: mk,
+            code,
+            shift_at_press: shift_held,
+            held_since: Instant::now(),
+        };
+        true
     }
 
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
@@ -197,7 +197,7 @@ impl StateMachine {
             AccentState::LetterHeld {
                 key,
                 code,
-                variants,
+                shift_at_press,
                 held_since,
                 ..
             } => {
@@ -206,13 +206,17 @@ impl StateMachine {
                         self.state = AccentState::Idle;
                         (false, None)
                     } else {
-                        let variants = variants.clone();
+                        // Shift at the letter press latches uppercase even if
+                        // it was released before the trigger.
+                        let uppercase = *shift_at_press || shift_held;
+                        let variants = crate::mappings::get_variants(*key, uppercase);
                         let held_key = *key;
                         let held_code = *code;
                         let held_since = *held_since;
                         self.state = AccentState::Selecting {
                             key: held_key,
                             code: held_code,
+                            uppercase,
                             variants: variants.clone(),
                             selected_index: 0,
                             held_since,
@@ -336,8 +340,8 @@ impl StateMachine {
                 key,
                 code: held,
                 shift_at_press,
-                variants,
                 held_since,
+                ..
             } => {
                 let (key, held, shift_at_press, held_since) =
                     (*key, *held, *shift_at_press, *held_since);
@@ -347,10 +351,15 @@ impl StateMachine {
                 }
                 if self.is_trigger(input) {
                     if held_since.elapsed() >= self.hold_delay {
-                        let variants = variants.clone();
+                        // Shift at the letter press latches uppercase even if
+                        // it was released before the trigger — people drop
+                        // Shift before the letter when typing capitals.
+                        let uppercase = shift_at_press || shift_held;
+                        let variants = crate::mappings::get_variants(key, uppercase);
                         self.state = AccentState::Selecting {
                             key,
                             code: held,
+                            uppercase,
                             variants: variants.clone(),
                             selected_index: 0,
                             held_since,
@@ -500,26 +509,32 @@ impl StateMachine {
         }
     }
 
-    /// Called when shift state changes. If in Selecting, refreshes variants.
+    /// Call on Shift *edges* only (never on autorepeat or unrelated flag
+    /// changes). While choosing, a Shift press toggles the case; a release
+    /// changes nothing — so a selection that became uppercase stays
+    /// uppercase even when Shift is dropped before the letter, matching how
+    /// people actually type capitals.
     pub fn update_shift(&mut self, shift_held: bool) -> Option<GrabEvent> {
+        if !shift_held {
+            return None;
+        }
         if let AccentState::Selecting {
             key,
+            uppercase,
             variants,
             selected_index,
             ..
         } = &mut self.state
         {
-            let new_variants = crate::mappings::get_variants(*key, shift_held);
-            if new_variants != *variants {
-                *variants = new_variants.clone();
-                if *selected_index >= variants.len() {
-                    *selected_index = 0;
-                }
-                return Some(GrabEvent::ShowOverlay {
-                    variants: variants.clone(),
-                    index: *selected_index,
-                });
+            *uppercase = !*uppercase;
+            *variants = crate::mappings::get_variants(*key, *uppercase);
+            if *selected_index >= variants.len() {
+                *selected_index = 0;
             }
+            return Some(GrabEvent::ShowOverlay {
+                variants: variants.clone(),
+                index: *selected_index,
+            });
         }
         None
     }
@@ -1125,6 +1140,68 @@ mod tests {
         assert_eq!(a.inject, Some(variants[0].clone()));
         assert_eq!(a.ui, Some(GrabEvent::InjectChar(variants[0].clone())));
         assert!(sm.is_idle());
+    }
+
+    #[test]
+    fn shift_release_keeps_uppercase_and_commit_stays_uppercase() {
+        let _guard = setup();
+        let mut sm = sm(ActivationKey::Both);
+        let a = sm.deferred_press(KeyInput::Letter(MappingKey::E), Some(E), true, false);
+        assert!(a.suppress);
+        sm.set_held_ago(Duration::from_millis(300));
+        let a = sm.deferred_press(KeyInput::Space, Some(SPACE), true, false);
+        let variants = match a.ui {
+            Some(GrabEvent::ShowOverlay { variants, .. }) => variants,
+            other => panic!("expected ShowOverlay, got {other:?}"),
+        };
+        assert!(variants[0].chars().next().unwrap().is_uppercase());
+        // Shift released before the letter: must NOT downgrade.
+        assert_eq!(sm.update_shift(false), None);
+        let a = sm.deferred_release(Some(E), false);
+        let injected = a.inject.expect("commit");
+        assert!(
+            injected.chars().next().unwrap().is_uppercase(),
+            "committed {injected:?} — must stay uppercase"
+        );
+    }
+
+    #[test]
+    fn uppercase_latches_from_letter_press_even_if_shift_gone_at_trigger() {
+        let _guard = setup();
+        let mut sm = sm(ActivationKey::Both);
+        // Letter pressed WITH shift…
+        sm.deferred_press(KeyInput::Letter(MappingKey::E), Some(E), true, false);
+        sm.set_held_ago(Duration::from_millis(300));
+        // …but shift already released when Space arrives.
+        let a = sm.deferred_press(KeyInput::Space, Some(SPACE), false, false);
+        match a.ui {
+            Some(GrabEvent::ShowOverlay { variants, .. }) => {
+                assert!(variants[0].chars().next().unwrap().is_uppercase())
+            }
+            other => panic!("expected ShowOverlay, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn shift_press_toggles_case_both_ways() {
+        let _guard = setup();
+        let mut sm = sm(ActivationKey::Both);
+        deferred_open_overlay(&mut sm); // opened lowercase
+        let up = sm.update_shift(true).expect("toggle to uppercase");
+        match up {
+            GrabEvent::ShowOverlay { variants, .. } => {
+                assert!(variants[0].chars().next().unwrap().is_uppercase())
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(sm.update_shift(false), None); // release: no change
+        let down = sm.update_shift(true).expect("toggle back to lowercase");
+        match down {
+            GrabEvent::ShowOverlay { variants, .. } => {
+                assert!(variants[0].chars().next().unwrap().is_lowercase())
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

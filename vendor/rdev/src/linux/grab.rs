@@ -364,7 +364,14 @@ where
     let mut epoll_buffer = [epoll::Event::new(epoll::Events::empty(), 0); 4];
     let mut inotify_buffer = vec![0_u8; 4096];
     'event_loop: loop {
-        let num_events = epoll::wait(epoll_fd, -1, &mut epoll_buffer)?;
+        // QuickAccent patch: epoll_wait is interrupted (EINTR) by signals and
+        // suspend/resume; propagating that killed the whole grab loop while
+        // the daemon kept running deaf.
+        let num_events = match epoll::wait(epoll_fd, -1, &mut epoll_buffer) {
+            Ok(n) => n,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue 'event_loop,
+            Err(e) => return Err(e),
+        };
 
         //map and simulate events, dealing with
         'events: for event in &epoll_buffer[0..num_events] {
@@ -391,6 +398,13 @@ where
                     //TODO: deal with EV_SYN::SYN_DROPPED
                     let (_, event) = match device.next_event(evdev_rs::ReadFlag::NORMAL) {
                         Ok(event) => event,
+                        // QuickAccent patch: EINTR/EAGAIN are transient — do
+                        // not de-register a healthy keyboard over them.
+                        Err(e) if e.raw_os_error() == Some(libc::EINTR)
+                            || e.raw_os_error() == Some(libc::EAGAIN) =>
+                        {
+                            continue 'events;
+                        }
                         Err(_) => {
                             let device_fd = device.fd().unwrap().into_raw_fd();
                             let empty_event = epoll::Event::new(epoll::Events::empty(), 0);

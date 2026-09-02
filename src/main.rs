@@ -216,11 +216,21 @@ fn acquire_single_instance_lock() -> bool {
                     "[QuickAccent] another instance (PID {holder}) holds the input grab; \
                      the service takes over — asking it to quit."
                 );
-                terminate_own_instance(&holder);
+                terminate_own_instance(&holder, false);
+            } else if attempts == 5 {
+                // Still there after ~1.5s of SIGTERM: it is verified to be
+                // our own stale binary, so force it.
+                terminate_own_instance(&holder, true);
             }
             attempts += 1;
             std::thread::sleep(Duration::from_millis(300));
             continue;
+        }
+        if running_as_service {
+            // Exit non-zero so Restart=on-failure keeps trying instead of
+            // leaving the service silently dead.
+            eprintln!("[QuickAccent] could not take over from PID {holder}; retrying via systemd");
+            std::process::exit(1);
         }
         eprintln!(
             "[QuickAccent] already running (PID {holder}) — nothing to do.\n{}",
@@ -234,15 +244,23 @@ fn acquire_single_instance_lock() -> bool {
     }
 }
 
-/// SIGTERM `pid` only if it really is a quickaccent process of ours.
-fn terminate_own_instance(pid: &str) {
+/// Signal `pid` only if it really is a quickaccent process. Identified via
+/// /proc/PID/comm — NOT /proc/PID/exe, whose link gains a " (deleted)"
+/// suffix as soon as the binary on disk is replaced by an upgrade, which
+/// made the old check silently refuse the exact process it existed for.
+fn terminate_own_instance(pid: &str, force: bool) {
     if pid.parse::<u32>().is_err() {
         return;
     }
-    let exe = std::fs::read_link(format!("/proc/{pid}/exe")).unwrap_or_default();
-    if exe.file_name().and_then(|n| n.to_str()) == Some("quickaccent") {
-        let _ = std::process::Command::new("kill").arg(pid).status();
+    let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).unwrap_or_default();
+    if comm.trim() != "quickaccent" {
+        return;
     }
+    let mut cmd = std::process::Command::new("kill");
+    if force {
+        cmd.arg("-9");
+    }
+    let _ = cmd.arg(pid).status();
 }
 
 fn start_config_watcher() {

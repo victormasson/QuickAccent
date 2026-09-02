@@ -90,6 +90,9 @@ Known limitation: with fractional display scaling the position can be offset.
   never typed. Cycle with Space/arrows, release the letter to insert the
   accent — no backspace, no cursor jump.
 - Escape closes the picker and types the plain letter.
+- Shift makes the picker uppercase and the choice sticks — releasing Shift
+  before the letter still commits the capital. Pressing Shift while the
+  picker is open toggles the case.
 
 ## Injection backend (all sessions: Wayland, X11)
 

@@ -147,10 +147,14 @@ mod platform {
             K_CG_EVENT_FLAGS_CHANGED => {
                 let flags = unsafe { CGEventGetFlags(event) };
                 let new_shift = (flags & K_CG_EVENT_FLAG_SHIFT) != 0;
+                let changed = *ctx.shift_held.borrow() != new_shift;
                 *ctx.shift_held.borrow_mut() = new_shift;
-                // Notify state machine of shift change during selection
-                if let Some(ge) = ctx.state.borrow_mut().update_shift(new_shift) {
-                    ctx.tx.send(ge).ok();
+                // update_shift is edge-triggered: FLAGS_CHANGED also fires
+                // for Ctrl/Alt/Cmd, which must not toggle the picker case.
+                if changed {
+                    if let Some(ge) = ctx.state.borrow_mut().update_shift(new_shift) {
+                        ctx.tx.send(ge).ok();
+                    }
                 }
                 event
             }
@@ -501,6 +505,7 @@ mod platform {
 
             // Track physical modifier state before anything can intercept —
             // a suppressed physical Ctrl-up must still clear the tracker.
+            let shift_before = mods.borrow().shift();
             let is_modifier = mods.borrow_mut().update(key, pressed);
 
             // 2. Physical releases of keys we already replayed virtually.
@@ -523,8 +528,13 @@ mod platform {
             if matches!(key, Key::ShiftLeft | Key::ShiftRight) {
                 mirror_modifier(code, pressed, is_repeat);
                 let shift = mods.borrow().shift();
-                if let Some(ge) = state.borrow_mut().update_shift(shift) {
-                    let _ = tx.send(ge);
+                // update_shift is edge-triggered (a press toggles the picker
+                // case): kernel autorepeat of a held Shift, or the second
+                // Shift key while one is down, must not reach it.
+                if shift != shift_before {
+                    if let Some(ge) = state.borrow_mut().update_shift(shift) {
+                        let _ = tx.send(ge);
+                    }
                 }
                 return Some(event);
             }

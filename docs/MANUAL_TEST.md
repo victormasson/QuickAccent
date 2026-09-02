@@ -23,7 +23,9 @@ The following needs a real desktop session (permissions + compositor).
       Space/arrows → release → accent inserted, no cursor movement
 - [ ] Works in: GNOME Text Editor, gnome-terminal, VS Code, Firefox,
       xterm (XWayland), LibreOffice
-- [ ] **Shift**: overlay flips to uppercase; commit inserts É directly
+- [ ] **Shift**: hold Shift + letter → uppercase picker; releasing Shift
+      BEFORE the letter still commits É (case latches; a Shift press while
+      the picker is open toggles it)
 - [ ] **Escape** closes overlay and types the plain letter
 - [ ] **Shortcuts unaffected**: Ctrl+E, Ctrl+C, Alt+Tab, Super
 - [ ] **Hotplug**: connect a second keyboard (USB or Bluetooth) mid-session →

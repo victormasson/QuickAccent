@@ -8,6 +8,15 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 Fixes for Omarchy 4 / Hyprland reported in
 [#9](https://github.com/victormasson/QuickAccent/issues/9).
 
+### Changed
+
+- **Uppercase choice now sticks.** Releasing Shift before the letter used to
+  flip the picker back to lowercase at the worst moment — the committed
+  character. The case now latches uppercase whenever Shift is involved (held
+  at the letter press or while choosing); a Shift release never downgrades,
+  and pressing Shift while the picker is open toggles the case either way.
+  This matches how plain letters already behaved.
+
 ### Fixed
 
 - **Keymap option silently not enabled on Hyprland with a Lua config.**
