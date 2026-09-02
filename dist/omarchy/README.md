@@ -11,8 +11,14 @@ widget showing whether the picker is armed, click to toggle.
 
 ## 1. Install the daemon
 
+Download the installer pinned to a release tag, read it, then run it — it is
+short, and does only what this README describes (binary, systemd user unit,
+udev rule, `input` group membership):
+
 ```bash
-curl -fsSL https://raw.githubusercontent.com/victormasson/QuickAccent/master/dist/linux/install.sh | bash
+curl -fsSLo quickaccent-install.sh https://raw.githubusercontent.com/victormasson/QuickAccent/v1.1.1/dist/linux/install.sh
+less quickaccent-install.sh   # review before running
+bash quickaccent-install.sh && rm quickaccent-install.sh
 ```
 
 This installs `~/.local/bin/quickaccent`, a systemd user unit, a udev rule
