@@ -85,6 +85,27 @@ languages = ["French", "German", "Spanish"]
 37 languages are available; see the
 [main README](https://github.com/victormasson/QuickAccent#config).
 
+## Removal
+
+Remove the plugin:
+
+```bash
+omarchy plugin disable io.github.victormasson.quickaccent 2>/dev/null || true
+rm -rf ~/.config/omarchy/plugins/io.github.victormasson.quickaccent
+```
+
+Uninstall the daemon (optional — it is a separate program):
+
+```bash
+systemctl --user disable --now quickaccent
+rm -f ~/.local/bin/quickaccent ~/.config/systemd/user/quickaccent.service
+rm -rf ~/.config/xkb/symbols/quickaccent ~/.config/quickaccent
+# drop the runtime keymap option Hyprland is holding
+hyprctl keyword input:kb_options "$(hyprctl getoption input:kb_options -j | \
+  python3 -c 'import json,sys;print(",".join(o for o in json.load(sys.stdin)["str"].split(",") if o!="quickaccent:accents"))')" 2>/dev/null || true
+sudo rm -f /etc/udev/rules.d/60-quickaccent.rules /etc/modules-load.d/uinput.conf
+```
+
 ## License
 
 MIT
