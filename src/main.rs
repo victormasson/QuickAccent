@@ -121,6 +121,11 @@ fn linux_setup() {
 /// (GNOME); any still-uncovered chars get the portal keysym tier.
 #[cfg(target_os = "linux")]
 fn setup_direct_typing() {
+    // On Hyprland the overlay steals keyboard focus (its X11 focus-proofing
+    // is inert on Wayland), swallowing the committed accent — keep focus on
+    // the user's app. Runs on startup and on each config reload (this is the
+    // reload callback), matching the kb_options lifecycle below.
+    hyprland::ensure_overlay_no_focus();
     let all = mappings::all_variant_chars();
     let base_missing = xkb_map::chars_missing_from_base(&all);
     if !base_missing.is_empty() {
