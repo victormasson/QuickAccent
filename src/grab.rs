@@ -479,7 +479,51 @@ mod platform {
         rdev::grab_skip_device_named(virtual_kb::DEVICE_NAME);
 
         let _ = xkb_map::logical_letter(MappingKey::A); // warm layout map
-        // (input_time only matters on macOS; the deferred flow ignores it.)
+
+        // Supervised grab: `grab()` returns when the event loop ends — which
+        // includes suspend/resume, where the kernel can hand back an error we
+        // can't paper over inside the loop. If the thread just returned here,
+        // the process would stay alive but deaf (issue: "running but not
+        // listening after suspend"). So re-establish the grab instead —
+        // rebuilding fresh state (Idle is the right reset) and re-running
+        // setup_devices, which re-opens and re-EVIOCGRABs every keyboard,
+        // recovering from re-enumeration too. A grab that keeps failing
+        // immediately (permission genuinely gone) backs off and finally exits
+        // non-zero so systemd restarts us rather than spinning.
+        let mut fast_failures = 0u32;
+        loop {
+            let started = std::time::Instant::now();
+            run_grab_once(input_time_ms, hold_delay_ms, activation_key, &tx);
+            let ran = started.elapsed();
+            if ran >= std::time::Duration::from_secs(5) {
+                // It was healthy for a while — a resume/hotplug blip. Retry now.
+                fast_failures = 0;
+                eprintln!("[QuickAccent] input grab dropped after {ran:?}; re-establishing");
+                continue;
+            }
+            fast_failures += 1;
+            if fast_failures >= 5 {
+                eprintln!(
+                    "[QuickAccent] input grab keeps failing immediately; exiting so the \
+                     service manager can restart it (check the 'input' group and /dev/uinput)"
+                );
+                std::process::exit(1);
+            }
+            let backoff = std::time::Duration::from_millis(200 * u64::from(fast_failures));
+            eprintln!("[QuickAccent] input grab failed; retrying in {backoff:?}");
+            std::thread::sleep(backoff);
+        }
+    }
+
+    /// One run of the evdev grab. Returns when the underlying event loop ends
+    /// (error, or all devices gone); the caller decides whether to retry.
+    fn run_grab_once(
+        input_time_ms: u64,
+        hold_delay_ms: u64,
+        activation_key: ActivationKey,
+        tx: &UnboundedSender<GrabEvent>,
+    ) {
+        let tx = tx.clone();
         let state = RefCell::new(StateMachine::new(input_time_ms, hold_delay_ms, activation_key));
         let mods = RefCell::new(Mods::default());
         let pending_release: RefCell<HashMap<u16, ReleaseAction>> = RefCell::new(HashMap::new());
@@ -593,10 +637,7 @@ mod platform {
         };
 
         if let Err(e) = grab_with_is_repeat(callback) {
-            eprintln!(
-                "[QuickAccent] grab failed: {e:?}\n\
-                 Need /dev/input access: sudo usermod -aG input $USER (re-login), or ./dist/linux/install.sh"
-            );
+            eprintln!("[QuickAccent] grab error: {e:?}");
         }
     }
 }

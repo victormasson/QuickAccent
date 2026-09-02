@@ -8,6 +8,16 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 Fixes for Omarchy 4 / Hyprland reported in
 [#9](https://github.com/victormasson/QuickAccent/issues/9).
 
+### Fixed
+
+- **Deaf after suspend/resume.** On resume the kernel can return an error
+  from the grabbed devices that ends the evdev event loop; the daemon then
+  stayed alive but stopped seeing the keyboard, needing a manual restart. The
+  grab is now supervised — it re-establishes itself (re-opening and
+  re-grabbing every keyboard, which also recovers from device
+  re-enumeration), and only a grab that keeps failing immediately exits so
+  the service manager restarts it.
+
 ### Changed
 
 - **Uppercase choice now sticks.** Releasing Shift before the letter used to
