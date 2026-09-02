@@ -108,6 +108,60 @@ pub fn persistent_hint(option: &str, value: &str) -> String {
     }
 }
 
+/// Window class of the accent overlay (see `app.rs`
+/// `application_id = "quickaccent"`).
+pub const OVERLAY_CLASS: &str = "quickaccent";
+
+/// Keep Hyprland's keyboard focus off the accent overlay.
+///
+/// The overlay is focus-proofed with X11 `override_redirect` (`app.rs`),
+/// which does nothing for a native-Wayland toplevel: Hyprland focuses the
+/// overlay, so the committed accent is typed into it instead of the app the
+/// user is working in, and nothing lands. A `no_focus` window rule leaves
+/// focus on that app. Applied at runtime (config files untouched) and, like
+/// `kb_options`, re-applied after each `configreloaded` — `hyprctl reload`
+/// drops runtime rules, which also keeps this from accumulating.
+///
+/// Unlike an option there is no read-back for window rules, so success is the
+/// compositor accepting the command; on refusal we print the persistent form.
+pub fn ensure_overlay_no_focus() {
+    if !is_running() {
+        return;
+    }
+    let applied = if uses_lua_config() {
+        set_overlay_no_focus_lua() || set_overlay_no_focus_legacy()
+    } else {
+        set_overlay_no_focus_legacy() || set_overlay_no_focus_lua()
+    };
+    if !applied {
+        eprintln!(
+            "[QuickAccent] could not keep Hyprland's focus off the accent overlay; \
+             picker accents may be swallowed. Add to ~/.config/hypr/windows.lua \
+             (Omarchy) or hyprland.lua, then `hyprctl reload`:\n  {}",
+            overlay_no_focus_lua()
+        );
+    }
+}
+
+/// `hl.window_rule` is Hyprland's native Lua binding (Omarchy's `o.window`
+/// helper wraps it), so it works on any Lua-config Hyprland.
+fn overlay_no_focus_lua() -> String {
+    format!("hl.window_rule({{ match = {{ class = \"{OVERLAY_CLASS}\" }}, no_focus = true }})")
+}
+
+fn set_overlay_no_focus_lua() -> bool {
+    hyprctl(&["eval", &overlay_no_focus_lua()])
+        .map(|r| !is_error_response(&r))
+        .unwrap_or(false)
+}
+
+fn set_overlay_no_focus_legacy() -> bool {
+    let rule = format!("nofocus, class:^({OVERLAY_CLASS})$");
+    hyprctl(&["keyword", "windowrulev2", &rule])
+        .map(|r| is_ok_response(&r))
+        .unwrap_or(false)
+}
+
 /// Hyprland re-reads its config on `hyprctl reload` — and Omarchy triggers
 /// that on every theme change — which drops runtime-set options. Watch the
 /// event socket and call `on_reload` after each `configreloaded`.
@@ -287,6 +341,15 @@ mod tests {
         assert!(is_config_reloaded_event("configreloaded>>\r"));
         assert!(!is_config_reloaded_event("workspace>>1"));
         assert!(!is_config_reloaded_event("activewindow>>foot,configreloaded"));
+    }
+
+    #[test]
+    fn overlay_no_focus_rule_targets_the_overlay_class() {
+        assert_eq!(
+            overlay_no_focus_lua(),
+            r#"hl.window_rule({ match = { class = "quickaccent" }, no_focus = true })"#
+        );
+        assert_eq!(OVERLAY_CLASS, "quickaccent");
     }
 
     #[test]
