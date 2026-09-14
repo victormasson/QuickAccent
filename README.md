@@ -162,6 +162,11 @@ and trigger the picker just as you would for a letter. See
 phonetic Latin keys. See [their bindings](docs/CHARACTERS.md#phonetic-hebrew-and-yiddish)
 for letters, final forms, vowel marks, and Yiddish combinations.
 
+`Cherokee`, `Osage`, `CanadianAboriginalSyllabics`,
+`CanadianAboriginalSyllabicsExtended`, and `CanadianAboriginalSyllabicsExtendedA`
+provide complete Unicode 17.0 repertoires through Latin-key lookup. See
+[script bindings and casing](docs/CHARACTERS.md#cherokee-osage-and-canadian-syllabics).
+
 ## Usage
 
 ```bash
