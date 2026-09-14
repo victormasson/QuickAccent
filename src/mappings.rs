@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 use std::sync::RwLock;
 
+#[path = "script_mappings.rs"]
+mod script_mappings;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MappingKey {
     A, B, C, D, E, F, G, H, I, J, K, L, M,
@@ -14,10 +17,12 @@ type LangData = &'static [(MappingKey, &'static [&'static str])];
 /// Every language name `get_language_data` accepts, for the settings UI.
 /// Keep in sync with the match below — the test enforces it one way.
 pub const LANGUAGES: &[&str] = &[
-    "Catalan", "CrimeanTatar", "Croatian", "Czech", "Danish", "Dutch", "Esperanto",
+    "CanadianAboriginalSyllabics", "CanadianAboriginalSyllabicsExtended",
+    "CanadianAboriginalSyllabicsExtendedA", "Catalan", "Cherokee",
+    "CrimeanTatar", "Croatian", "Czech", "Danish", "Dutch", "Esperanto",
     "Estonian", "Finnish", "French", "German", "Greek", "Hebrew", "Hungarian", "IPA",
     "Iceland", "Irish", "Italian", "Kurdish", "Lithuanian", "Maltese", "Maori",
-    "Norwegian", "Pinyin", "Polish", "Portuguese", "ProtoIndoEuropean", "Romanian",
+    "Norwegian", "Osage", "Pinyin", "Polish", "Portuguese", "ProtoIndoEuropean", "Romanian",
     "Romanization", "ScottishGaelic", "Serbian", "Slovak", "Slovenian", "Spanish",
     "Swedish", "Turkish", "Vietnamese", "Welsh", "Yiddish",
 ];
@@ -107,6 +112,11 @@ fn build_map(languages: &[String]) -> HashMap<MappingKey, Vec<String>> {
 
 fn get_language_data(name: &str) -> Option<LangData> {
     match name {
+        "Cherokee" => Some(script_mappings::CHEROKEE),
+        "Osage" => Some(script_mappings::OSAGE),
+        "CanadianAboriginalSyllabics" => Some(script_mappings::CANADIAN),
+        "CanadianAboriginalSyllabicsExtended" => Some(script_mappings::CANADIAN_EXTENDED),
+        "CanadianAboriginalSyllabicsExtendedA" => Some(script_mappings::CANADIAN_EXTENDED_A),
         // PowerToys PowerAccent.Common/CharacterMappings.cs, MIT licensed.
         // Copyright (c) Microsoft Corporation. See THIRD_PARTY_NOTICES.md.
         "Special" => Some(&[
@@ -728,6 +738,19 @@ mod tests {
         assert_eq!(variants[0], "•");
         assert_eq!(variants.iter().filter(|s| *s == "•").count(), 1);
         assert!(variants.contains(&"…".into()));
+    }
+
+    #[test]
+    fn every_selectable_character_has_a_unicode_name() {
+        for name in LANGUAGES.iter().chain(SYMBOL_SETS) {
+            for (_, choices) in get_language_data(name).unwrap() {
+                for choice in *choices {
+                    for ch in choice.chars().chain(choice.to_uppercase().chars()) {
+                        assert!(unicode_names2::name(ch).is_some(), "{name}: U+{:04X}", ch as u32);
+                    }
+                }
+            }
+        }
     }
 
     #[test]
