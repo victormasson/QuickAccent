@@ -48,8 +48,34 @@ const CELL_SPACING: f32 = 4.0;
 // Outer padding (20px) plus a little spare room for rounding.
 const PADDING: f32 = 28.0;
 const WINDOW_HEIGHT: f32 = 70.0;
+const PAGE_COUNTER_WIDTH: f32 = 80.0;
 
-fn window_width_for(variants: &[String]) -> f32 {
+fn window_width_for(variants: &[String], items_per_page: usize) -> f32 {
+    if items_per_page == 0 {
+        return row_width_for(variants);
+    }
+    // Reserve the widest page once, so cycling does not move or resize the picker.
+    let width = variants
+        .chunks(items_per_page)
+        .map(row_width_for)
+        .fold(PADDING, f32::max);
+    width
+        + if variants.len() > items_per_page {
+            PAGE_COUNTER_WIDTH
+        } else {
+            0.0
+        }
+}
+
+fn page_range(count: usize, selected_index: usize, items_per_page: usize) -> std::ops::Range<usize> {
+    if items_per_page == 0 {
+        return 0..count;
+    }
+    let start = selected_index / items_per_page * items_per_page;
+    start..start + (count - start).min(items_per_page)
+}
+
+fn row_width_for(variants: &[String]) -> f32 {
     use iced::advanced::{
         graphics::text::Paragraph,
         text::{Paragraph as _, Text},
@@ -158,6 +184,13 @@ mod tests {
             "ײַ",
             "דזש",
             "\u{05b7}",
+            "Ꭰ",
+            "ꭰ",
+            "𐓘",
+            "𐒰",
+            "ᐁ",
+            "ᢰ",
+            "𑪰",
         ] {
             let content = variant_label(variant);
             let paragraph = Paragraph::with_text(Text {
@@ -187,7 +220,7 @@ mod tests {
             let row = vec![variant.to_string(); 4];
             let required_width = 20.0 + 4.0 * (visible_width + 28.0) + 3.0 * 4.0;
             assert!(
-                window_width_for(&row) >= required_width,
+                window_width_for(&row, 12) >= required_width,
                 "{variant:?}: shaped row is wider than the overlay window"
             );
         }
@@ -195,9 +228,53 @@ mod tests {
 
     #[test]
     fn window_width_grows_with_variant_count() {
-        assert!(window_width_for(&["é".into()]) < window_width_for(&["é".into(), "é".into()]));
-        assert!(window_width_for(&["C".into()]) < window_width_for(&["°C".into()]));
-        assert_eq!(window_width_for(&[]), PADDING);
+        assert!(window_width_for(&["é".into()], 12) < window_width_for(&["é".into(), "é".into()], 12));
+        assert!(window_width_for(&["C".into()], 12) < window_width_for(&["°C".into()], 12));
+        assert_eq!(window_width_for(&[], 12), PADDING);
+    }
+
+    #[test]
+    fn zero_shows_the_complete_list_without_counter_space() {
+        assert_eq!(page_range(0, 0, 0), 0..0);
+        assert_eq!(window_width_for(&[], 0), PADDING);
+        let variants = vec!["ᑌ".to_string(); 113];
+        for index in 0..variants.len() {
+            assert_eq!(page_range(variants.len(), index, 0), 0..variants.len());
+        }
+        assert_eq!(window_width_for(&variants, 0), row_width_for(&variants));
+    }
+
+    #[test]
+    fn long_lists_keep_every_selection_on_a_bounded_page() {
+        for size in [1, 8, 12, 24, 1000] {
+            assert_eq!(page_range(0, 0, size), 0..0);
+            for count in [1, 8, 9, 12, 13, 24, 25, 113, 726] {
+                for index in 0..count {
+                    let page = page_range(count, index, size);
+                    assert!(page.contains(&index));
+                    assert!(page.len() <= size);
+                    assert!(page.end <= count);
+                }
+            }
+            let variants = vec!["ᑌ".to_string(); 113];
+            let counter = if variants.len() > size { PAGE_COUNTER_WIDTH } else { 0.0 };
+            assert_eq!(window_width_for(&variants, size), row_width_for(&variants[..size.min(variants.len())]) + counter);
+        }
+        assert_eq!(page_range(25, 11, 12), 0..12);
+        assert_eq!(page_range(25, 12, 12), 12..24);
+        assert_eq!(page_range(25, 24, 12), 24..25);
+        let mut variants = vec!["ᑌ".to_string(); 113];
+        assert_eq!(
+            window_width_for(&variants, 12),
+            row_width_for(&variants[..12]) + PAGE_COUNTER_WIDTH
+        );
+        // A wider choice on a later page must also fit; the first page is not sufficient.
+        variants[90] = "דזש".to_string();
+        let width = window_width_for(&variants, 12);
+        for page in variants.chunks(12) {
+            assert!(width >= row_width_for(page) + PAGE_COUNTER_WIDTH);
+        }
+        assert!(width < 800.0, "paged picker unexpectedly wide: {width}");
     }
 
     #[test]
@@ -245,6 +322,7 @@ pub enum Message {
 }
 
 pub struct App {
+    items_per_page: usize,
     variants: Vec<String>,
     selected_index: usize,
     overlay_window: Option<window::Id>,
@@ -286,7 +364,7 @@ fn settings_slider<'a>(
 }
 
 impl App {
-    pub fn new(grab_rx: Arc<Mutex<Option<UnboundedReceiver<GrabEvent>>>>) -> (Self, Task<Message>) {
+    pub fn new(grab_rx: Arc<Mutex<Option<UnboundedReceiver<GrabEvent>>>>, items_per_page: usize) -> (Self, Task<Message>) {
         GRAB_RX.set(grab_rx).ok();
         // Development aid: QUICKACCENT_DEMO=overlay|settings opens that window
         // at startup without needing the keyboard grab (or its permissions).
@@ -307,6 +385,7 @@ impl App {
         let activation_key = cfg.activation_key_parsed();
         (
             App {
+                items_per_page,
                 variants: Vec::new(),
                 selected_index: 0,
                 overlay_window: None,
@@ -361,7 +440,7 @@ impl App {
         match message {
             Message::ShowOverlay(variants, index) => {
                 self.selected_index = index;
-                let width = window_width_for(&variants);
+                let width = window_width_for(&variants, self.items_per_page);
                 self.variants = variants;
 
                 if let Some(id) = self.overlay_window {
@@ -572,17 +651,20 @@ impl App {
         let chip_radius = self.chip_radius;
         let overlay_radius = self.overlay_radius;
 
-        let cells: Vec<Element<Message>> =
-            self.variants
-                .iter()
-                .enumerate()
-                .map(|(i, ch)| {
-                    let is_selected = i == self.selected_index;
-                    let label = text(variant_label(ch))
-                        .size(TEXT_SIZE)
-                        .font(iced::Font::DEFAULT)
-                        .shaping(text::Shaping::Advanced)
-                        .wrapping(text::Wrapping::None);
+        let page = page_range(self.variants.len(), self.selected_index, self.items_per_page);
+        let mut cells: Vec<Element<Message>> = self
+            .variants
+            .iter()
+            .enumerate()
+            .skip(page.start)
+            .take(page.len())
+            .map(|(i, ch)| {
+                let is_selected = i == self.selected_index;
+                let label = text(variant_label(ch))
+                    .size(TEXT_SIZE)
+                    .font(iced::Font::DEFAULT)
+                    .shaping(text::Shaping::Advanced)
+                    .wrapping(text::Wrapping::None);
 
                     let cell = container(label).padding([8.0, CELL_PADDING]).style(
                         move |_theme: &Theme| container::Style {
@@ -607,6 +689,22 @@ impl App {
                     cell.into()
                 })
                 .collect();
+
+        if self.items_per_page > 0 && self.variants.len() > self.items_per_page {
+            cells.push(
+                container(
+                    text(format!(
+                        "{}/{}",
+                        self.selected_index + 1,
+                        self.variants.len()
+                    ))
+                    .size(14)
+                    .color(chip_text),
+                )
+                .center_x(PAGE_COUNTER_WIDTH)
+                .into(),
+            );
+        }
 
         container(
             row(cells)

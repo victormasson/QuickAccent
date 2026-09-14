@@ -130,11 +130,14 @@ INSTALL_FROM_SOURCE=1 ./dist/linux/install.sh
 
 ## Config
 
-`~/.config/quickaccent/config.toml` (created on first run; hot-reloaded):
+`~/.config/quickaccent/config.toml` is created on first run. Languages, timing,
+and activation-key changes reload automatically; appearance is refreshed when
+a window opens. Restart to apply pagination changes:
 
 ```toml
 languages = ["French", "German", "Spanish"]
 # hold_delay_ms = 250
+# items_per_page = 0
 # input_time_ms = 200
 # activation_key = "Both"   # Space | LeftRightArrow | Both
 # theme = "system"   # system | light | dark | dracula
@@ -146,7 +149,7 @@ languages = ["French", "German", "Spanish"]
 ```
 
 On macOS the *Settings…* window in the menu-bar menu (and on GNOME the top-bar
-*QuickAccent* menu) edits every key above for you (only those lines are
+*QuickAccent* menu) edits the settings above except `items_per_page` for you (only those lines are
 rewritten; comments and other keys are kept).
 
 **Languages:** Catalan, CrimeanTatar, Croatian, Czech, Danish, Dutch, Esperanto, Estonian, Finnish, French, German, Greek, Hungarian, IPA, Iceland, Irish, Italian, Kurdish, Lithuanian, Maltese, Maori, Norwegian, Pinyin, Polish, Portuguese, ProtoIndoEuropean, Romanian, Romanization, ScottishGaelic, Serbian, Slovak, Slovenian, Spanish, Swedish, Turkish, Vietnamese, Welsh
@@ -163,6 +166,20 @@ phonetic Latin keys. See [their bindings](docs/CHARACTERS.md#phonetic-hebrew-and
 for letters, final forms, vowel marks, and Yiddish combinations.
 
 ## Usage
+
+### Picker pages
+
+`items_per_page = 0` is the default: show all choices without pagination or a
+counter. To enable pages, set a positive integer such as `items_per_page = 12`
+in `~/.config/quickaccent/config.toml`, then restart QuickAccent.
+
+Space or Right Arrow advances, Left Arrow goes back, and the display changes
+pages automatically. The counter shows the selected position and total (e.g.
+`1/113`), not a page number, and only appears when multiple pages exist.
+Cycling wraps at either end; releasing the original key inserts the selected
+character, and Escape cancels as usual. The widest page determines window
+width, so cycling does not resize it. Showing all choices (`items_per_page = 0`)
+can make long pickers wider than the screen.
 
 ```bash
 quickaccent

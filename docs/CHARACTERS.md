@@ -67,6 +67,10 @@ picker order. The quote key is the US apostrophe/double-quote key, without Shift
 | CurrencyExtended | `n` | ₦ (naira) |
 | CurrencyExtended | `r` | ₨ (rupee) |
 
+## Picker pagination
+
+For long character sets, see [Picker pages](../README.md#picker-pages) to configure pagination via `items_per_page`.
+
 ## Phonetic Hebrew and Yiddish
 
 Add `Hebrew` and/or `Yiddish` to `languages`, for example:
