@@ -11,6 +11,7 @@ use std::sync::Mutex;
 pub const UUID: &str = "quickaccent-focus@victormasson.github.io";
 const EXTENSION_JS: &str = include_str!("../dist/linux/gnome-extension/extension.js");
 const METADATA_JSON: &str = include_str!("../dist/linux/gnome-extension/metadata.json");
+const STYLESHEET_CSS: &str = include_str!("../dist/linux/gnome-extension/stylesheet.css");
 
 /// A window frame rectangle in global logical coordinates.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -35,6 +36,7 @@ pub fn ensure_installed() {
     for (name, content) in [
         ("extension.js", EXTENSION_JS),
         ("metadata.json", METADATA_JSON),
+        ("stylesheet.css", STYLESHEET_CSS),
     ] {
         let path = dir.join(name);
         if std::fs::read_to_string(&path).ok().as_deref() != Some(content) {

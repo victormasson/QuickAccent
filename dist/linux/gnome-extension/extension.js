@@ -25,11 +25,12 @@ const APP_IFACE = 'io.github.victormasson.QuickAccent';
 const Indicator = GObject.registerClass(
 class QuickAccentIndicator extends PanelMenu.Button {
     _init() {
-        super._init(0.5, 'QuickAccent', false);
+        super._init(0.5, 'QuickAccent');
 
         this.add_child(new St.Label({
-            text: 'Q\u0304',
+            text: 'Á',
             y_align: Clutter.ActorAlign.CENTER,
+            style_class: 'quickaccent-panel-label',
         }));
 
         const settings = new PopupMenu.PopupMenuItem('Settings\u2026');

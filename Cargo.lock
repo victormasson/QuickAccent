@@ -3128,8 +3128,10 @@ dependencies = [
  "objc",
  "rdev",
  "serde",
+ "serde_json",
  "tokio",
  "toml",
+ "x11rb",
  "xkbcommon",
  "zbus 5.19.0",
 ]

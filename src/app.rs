@@ -97,29 +97,63 @@ fn variant_label(ch: &str) -> String {
     format!("\u{200e}{base}{ch}")
 }
 
-/// Frame rect (x, y, w, h) of the window being typed in, refreshed before
-/// opening the overlay — the overlay opens centered on it (i.e.
-/// on the monitor in use). None = center on the primary monitor.
-static OVERLAY_ANCHOR: Mutex<Option<(f32, f32, f32, f32)>> = Mutex::new(None);
+/// Frame rect of the window being typed in, in the window system's own
+/// coordinates (X11 pixels on Linux, screen points on macOS), refreshed before
+/// opening the overlay — the overlay opens centered on it (i.e. on the
+/// monitor in use). `scale` is how many of those units one overlay logical
+/// pixel spans (>1 on a scaled XWayland monitor); the window is sized in
+/// those units and drawn at that scale so it looks the same everywhere.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Anchor {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+    pub scale: f32,
+}
 
-pub fn set_overlay_anchor(anchor: Option<(f32, f32, f32, f32)>) {
+/// None = center on the primary monitor.
+static OVERLAY_ANCHOR: Mutex<Option<Anchor>> = Mutex::new(None);
+
+pub fn set_overlay_placement(anchor: Option<Anchor>) {
     *OVERLAY_ANCHOR.lock().unwrap() = anchor;
 }
 
+/// Unscaled anchor (x, y, w, h) — macOS.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn set_overlay_anchor(anchor: Option<(f32, f32, f32, f32)>) {
+    set_overlay_placement(
+        anchor.map(|(x, y, width, height)| Anchor { x, y, width, height, scale: 1.0 }),
+    );
+}
+
+fn overlay_anchor() -> Option<Anchor> {
+    *OVERLAY_ANCHOR.lock().unwrap()
+}
+
+/// Window size in window-system units for a `width` logical overlay.
+fn overlay_size(width: f32, scale: f32) -> iced::Size {
+    iced::Size::new(width * scale, WINDOW_HEIGHT * scale)
+}
+
 fn overlay_position(width: f32) -> window::Position {
-    match *OVERLAY_ANCHOR.lock().unwrap() {
-        Some((x, y, w, h)) => window::Position::Specific(iced::Point::new(
-            x + (w - width) / 2.0,
-            y + (h - WINDOW_HEIGHT) / 2.0,
-        )),
+    match overlay_anchor() {
+        Some(a) => {
+            let size = overlay_size(width, a.scale);
+            window::Position::Specific(iced::Point::new(
+                a.x + (a.width - size.width) / 2.0,
+                a.y + (a.height - size.height) / 2.0,
+            ))
+        }
         None => window::Position::Centered,
     }
 }
 
 fn overlay_settings(width: f32) -> window::Settings {
+    let scale = overlay_anchor().map_or(1.0, |a| a.scale);
     #[allow(unused_mut)]
     let mut settings = window::Settings {
-        size: iced::Size::new(width, WINDOW_HEIGHT),
+        size: overlay_size(width, scale),
         decorations: false,
         transparent: true,
         level: window::Level::AlwaysOnTop,
@@ -220,6 +254,19 @@ mod tests {
             window::Position::Centered
         ));
     }
+
+    #[test]
+    fn scaled_anchor_sizes_and_centers_the_overlay_in_window_units() {
+        // A 2× XWayland monitor: the window is twice as big in X pixels and
+        // still centered on the anchor.
+        set_overlay_placement(Some(Anchor { x: 3840.0, y: 0.0, width: 1000.0, height: 800.0, scale: 2.0 }));
+        let window::Position::Specific(point) = overlay_position(200.0) else {
+            panic!("expected focused-window position");
+        };
+        assert_eq!((point.x, point.y), (4140.0, 330.0));
+        assert_eq!(overlay_settings(200.0).size, iced::Size::new(400.0, WINDOW_HEIGHT * 2.0));
+        set_overlay_placement(None);
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -248,6 +295,8 @@ pub struct App {
     variants: Vec<String>,
     selected_index: usize,
     overlay_window: Option<window::Id>,
+    /// Scale the open overlay window was sized with (see `Anchor::scale`).
+    overlay_scale: f32,
     settings_window: Option<window::Id>,
     /// Enabled languages / symbol sets, in config order.
     languages: Vec<String>,
@@ -310,6 +359,7 @@ impl App {
                 variants: Vec::new(),
                 selected_index: 0,
                 overlay_window: None,
+                overlay_scale: 1.0,
                 settings_window: None,
                 languages: cfg.languages,
                 theme_choice,
@@ -366,7 +416,7 @@ impl App {
 
                 if let Some(id) = self.overlay_window {
                     // Window already open, just resize and update
-                    return window::resize(id, iced::Size::new(width, WINDOW_HEIGHT));
+                    return window::resize(id, overlay_size(width, self.overlay_scale));
                 }
 
                 #[cfg(target_os = "macos")]
@@ -374,7 +424,12 @@ impl App {
                 self.refresh_from_config();
 
                 let settings = overlay_settings(width);
-                log::debug!("opening overlay window at {:?}", settings.position);
+                self.overlay_scale = overlay_anchor().map_or(1.0, |a| a.scale);
+                log::debug!(
+                    "opening overlay window at {:?}, scale {}",
+                    settings.position,
+                    self.overlay_scale
+                );
                 let (id, open_task) = window::open(settings);
                 log::debug!("overlay window id {id:?}");
                 self.overlay_window = Some(id);
@@ -749,6 +804,16 @@ impl App {
             Subscription::run(ui_subscription),
             window::close_events().map(Message::WindowClosed),
         ])
+    }
+
+    /// Per-window UI scale: the overlay is sized in window-system units
+    /// (`Anchor::scale` of them per logical pixel); other windows are 1:1.
+    pub fn scale_factor(&self, window_id: window::Id) -> f64 {
+        if self.overlay_window == Some(window_id) {
+            f64::from(self.overlay_scale)
+        } else {
+            1.0
+        }
     }
 
     pub fn theme(&self, _window_id: window::Id) -> Theme {

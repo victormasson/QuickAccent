@@ -784,9 +784,16 @@ mod platform {
                     // Anchor the overlay on the window being typed in, so it
                     // opens on the right monitor (needs the shell extension;
                     // None keeps the primary-centered fallback).
-                    crate::app::set_overlay_anchor(
-                        crate::shell_ext::focused_window_rect()
-                            .map(|r| (r.x, r.y, r.width, r.height)),
+                    crate::app::set_overlay_placement(
+                        crate::x11_layout::focused_window_placement().map(|p| {
+                            crate::app::Anchor {
+                                x: p.rect.x,
+                                y: p.rect.y,
+                                width: p.rect.width,
+                                height: p.rect.height,
+                                scale: p.scale,
+                            }
+                        }),
                     );
                 }
                 let _ = tx.send(ge);

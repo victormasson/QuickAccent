@@ -18,6 +18,8 @@ mod theme;
 #[cfg(target_os = "linux")]
 mod virtual_kb;
 #[cfg(target_os = "linux")]
+mod x11_layout;
+#[cfg(target_os = "linux")]
 mod xkb_custom;
 #[cfg(target_os = "linux")]
 mod xkb_map;
@@ -105,6 +107,7 @@ fn main() -> iced::Result {
         .subscription(app::App::subscription)
         .theme(app::App::theme)
         .style(app::App::style)
+        .scale_factor(app::App::scale_factor)
         .run_with(move || app::App::new(grab_rx_clone.clone()))
 }
 
@@ -122,6 +125,15 @@ fn linux_setup() {
         // Omarchy reloads Hyprland's config on every theme change, which
         // drops runtime-set options — put ours back each time.
         hyprland::watch_config_reloads(setup_direct_typing);
+    }
+    if hyprland::is_running() && std::env::var_os("WINIT_X11_SCALE_FACTOR").is_none() {
+        // The overlay is positioned in XWayland pixels (`x11_layout`). Left
+        // alone, winit guesses a scale factor from the physical size of the
+        // monitor under the *mouse pointer* and multiplies the position by
+        // it, which throws the window onto another monitor or off the X
+        // screen. Pin it: the per-monitor scale is applied by
+        // `App::scale_factor` instead.
+        std::env::set_var("WINIT_X11_SCALE_FACTOR", "1");
     }
     if let Some(wl) = std::env::var_os("WAYLAND_DISPLAY") {
         injection::set_wayland_display(wl.clone());
