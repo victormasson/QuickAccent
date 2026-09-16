@@ -6,8 +6,9 @@
 //! user configuration from `~/.config/xkb`. We generate an xkb *option*
 //! (`quickaccent:accents`) that maps the accent characters onto spare
 //! keycodes no physical keyboard emits (F13–F23 + a few dead multimedia
-//! codes), with F24 acting as a virtual AltGr (`ISO_Level3_Shift`) so each
-//! key carries four characters. The option is then enabled in whichever
+//! codes that Chromium still recognises, see `SLOT_KEYS`), with F24 acting
+//! as a virtual AltGr (`ISO_Level3_Shift`) so each key carries four
+//! characters. The option is then enabled in whichever
 //! compositor is running — GNOME via `org.gnome.desktop.input-sources
 //! xkb-options`, Hyprland via `hyprctl eval`/`keyword` on `input:kb_options`
 //! (verified by reading the value back) — which
@@ -22,8 +23,17 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub const LEVEL3_CODE: u16 = 194;
 
 /// Spare keys for characters: (xkb key name, evdev code).
-/// F13–F23, then keycodes with no default symbols anywhere (KEY_BASSBOOST,
-/// KEY_HP, KEY_XFER, KEY_ALTERASE) — nothing a real keyboard sends.
+///
+/// F13–F23, then multimedia codes practically no keyboard sends. Every code
+/// must also be one Chromium's evdev→`DomCode` table knows
+/// (`ui/events/keycodes/dom/dom_code_data.inc`): Chromium, Electron and the
+/// Chromium PWAs drop key events for codes missing from that table before
+/// looking up the keysym, so accents parked on such a key (formerly KEY_HP,
+/// KEY_QUESTION, KEY_ALTERASE) never appeared in Brave, VS Code or Teams.
+/// The chosen `DomCode`s also map to no `VKEY` (VKEY_UNKNOWN), so no browser
+/// accelerator can match them; KEY_NEW/CLOSE/ALL_APPLICATIONS, the WWW,
+/// lock, keyboard-backlight and brightness keys are left out for that reason
+/// or because laptops and media keyboards do send them.
 const SLOT_KEYS: &[(&str, u16)] = &[
     ("FK13", 183),
     ("FK14", 184),
@@ -36,11 +46,21 @@ const SLOT_KEYS: &[(&str, u16)] = &[
     ("FK21", 191),
     ("FK22", 192),
     ("FK23", 193),
-    ("I217", 209),
-    ("I219", 211),
-    ("I222", 214),
-    ("I230", 222),
+    ("I217", 209), // KEY_BASSBOOST
+    ("I218", 210), // KEY_PRINT (not PrintScreen)
+    ("I126", 118), // KEY_KPPLUSMINUS
+    ("I177", 169), // KEY_PHONE
+    ("I182", 174), // KEY_EXIT
+    ("I190", 182), // KEY_REDO
+    ("I242", 234), // KEY_SAVE
+    ("I243", 235), // KEY_DOCUMENTS
+    ("I252", 244), // KEY_BRIGHTNESS_AUTO
 ];
+
+/// evdev codes Chromium's `DomCode` table does not know (a sample: the ones
+/// this once shipped with). Never put a character on them.
+#[cfg(test)]
+const CHROMIUM_UNMAPPED: &[u16] = &[211, 214, 222];
 
 pub const OPTION_NAME: &str = "quickaccent:accents";
 
@@ -161,13 +181,19 @@ fn generate_symbols(missing: &[char]) -> (String, usize) {
     (out, overflow)
 }
 
-/// Deterministic (lowercase, uppercase) pairs; caseless chars pair with
-/// themselves.
+/// (lowercase, uppercase) pairs in the order the characters were given
+/// (that order is the slot priority); caseless chars pair with themselves.
 fn case_pairs(chars: &[char]) -> Vec<(char, char)> {
-    let set: std::collections::BTreeSet<char> = chars.iter().copied().collect();
-    let mut used: std::collections::BTreeSet<char> = std::collections::BTreeSet::new();
+    let set: std::collections::HashSet<char> = chars.iter().copied().collect();
+    let mut used: std::collections::HashSet<char> = std::collections::HashSet::new();
     let mut pairs = Vec::new();
-    for &c in &set {
+    let mut ordered: Vec<char> = Vec::with_capacity(chars.len());
+    for &c in chars {
+        if !ordered.contains(&c) {
+            ordered.push(c);
+        }
+    }
+    for &c in &ordered {
         if used.contains(&c) {
             continue;
         }
@@ -179,7 +205,11 @@ fn case_pairs(chars: &[char]) -> Vec<(char, char)> {
         } else if c.is_uppercase() {
             let lower = c.to_lowercase().next().unwrap_or(c);
             if set.contains(&lower) {
-                continue; // handled from the lowercase side
+                // Listed before its lowercase: the pair takes this slot.
+                pairs.push((lower, c));
+                used.insert(lower);
+                used.insert(c);
+                continue;
             }
             pairs.push((c, c));
             used.insert(c);
@@ -189,7 +219,27 @@ fn case_pairs(chars: &[char]) -> Vec<(char, char)> {
             used.insert(upper);
         }
     }
-    pairs
+    pack_caseless(pairs)
+}
+
+/// A caseless character (¢, €, ₹…) pairs with itself, wasting the Shift
+/// level of its slot. Fold consecutive caseless pairs two into one, so a
+/// currency set costs half the slots; the first of each fold keeps its
+/// position, which preserves the priority order.
+fn pack_caseless(pairs: Vec<(char, char)>) -> Vec<(char, char)> {
+    let mut out: Vec<(char, char)> = Vec::with_capacity(pairs.len());
+    let mut open: Option<usize> = None; // index in `out` of a half-filled caseless slot
+    for (l, u) in pairs {
+        if l != u {
+            out.push((l, u));
+        } else if let Some(i) = open.take() {
+            out[i].1 = l;
+        } else {
+            open = Some(out.len());
+            out.push((l, l));
+        }
+    }
+    out
 }
 
 fn keysym_name(c: char) -> String {
@@ -357,13 +407,42 @@ mod tests {
     use super::*;
 
     #[test]
-    fn case_pairs_pairs_and_orders() {
+    fn case_pairs_pairs_and_keeps_input_order() {
         let pairs = case_pairs(&['é', 'É', 'ç', 'Ç', 'ß']);
-        assert!(pairs.contains(&('ç', 'Ç')));
-        assert!(pairs.contains(&('é', 'É')));
+        assert_eq!(&pairs[..2], &[('é', 'É'), ('ç', 'Ç')]);
         assert!(pairs.contains(&('ß', 'ẞ')) || pairs.contains(&('ß', 'ß')) || pairs.contains(&('ß', 'S')));
-        // Deterministic: same input, same output.
-        assert_eq!(pairs, case_pairs(&['ß', 'Ç', 'É', 'ç', 'é']));
+        // Input order is the slot priority: the first character listed gets
+        // the first slot, whichever case comes first.
+        assert_eq!(&case_pairs(&['Ç', 'é', 'ç', 'É'])[..2], &[('ç', 'Ç'), ('é', 'É')]);
+        assert_eq!(case_pairs(&['a', 'a']).len(), 1);
+    }
+
+    #[test]
+    fn caseless_chars_share_a_slot_pair() {
+        // ¢ € share one slot (levels 1 and 2), then ç/Ç, then ₹ alone; the
+        // first caseless char of each fold keeps its priority position.
+        assert_eq!(
+            case_pairs(&['¢', 'ç', '€', 'Ç', '₹']),
+            vec![('¢', '€'), ('ç', 'Ç'), ('₹', '₹')]
+        );
+        let (s, overflow) = generate_symbols(&['¢', '€']);
+        assert_eq!(overflow, 0);
+        assert!(s.contains("[ U00A2, U20AC, U00A2, U20AC ]"), "{s}");
+    }
+
+    #[test]
+    fn slot_keys_avoid_codes_chromium_drops() {
+        for (name, code) in SLOT_KEYS {
+            assert!(!CHROMIUM_UNMAPPED.contains(code), "{name} ({code}) is dropped by Chromium");
+            assert!(*code != LEVEL3_CODE, "{name} collides with the level-3 key");
+        }
+        // xkb key names follow the evdev+8 convention for I-keys.
+        for (name, code) in SLOT_KEYS {
+            if let Some(n) = name.strip_prefix('I') {
+                assert_eq!(n.parse::<u16>().unwrap(), code + 8, "{name}");
+            }
+        }
+        assert_eq!(SLOT_KEYS.len() * 4, 80);
     }
 
     #[test]
@@ -373,8 +452,8 @@ mod tests {
         assert!(s.contains("ISO_Level3_Shift"));
         assert!(s.contains("U00E9"));
         assert!(s.contains("U00C9"));
-        // à/À and é/É pack onto one FOUR_LEVEL key.
-        assert!(s.contains("[ U00E0, U00C0, U00E9, U00C9 ]"));
+        // é/É and à/À pack onto one FOUR_LEVEL key, in the order given.
+        assert!(s.contains("[ U00E9, U00C9, U00E0, U00C0 ]"), "{s}");
     }
 
     #[test]

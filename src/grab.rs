@@ -591,6 +591,7 @@ mod platform {
             _ => None,
         };
         if let Some(combo) = single.and_then(xkb_map::combo_for_char) {
+            log::debug!("[QuickAccent] typing {ch:?} via keymap {combo:?} (held shifts {held_shifts:?}, altgr {})", mods.altgr);
             match virtual_kb::emit_combo(
                 combo.code,
                 combo.shift,
@@ -614,6 +615,7 @@ mod platform {
                 eprintln!("[QuickAccent] portal injection unavailable: {e}");
             }
         }
+        log::debug!("[QuickAccent] typing {ch:?} via clipboard fallback");
         injection::inject_char_fallback(ch.to_string(), held_shifts);
     }
 

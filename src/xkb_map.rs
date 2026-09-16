@@ -452,6 +452,53 @@ const LETTERS: [MappingKey; 26] = [
 mod tests {
     use super::*;
 
+    /// Diagnostic: how the live keymap (layout, options, custom xkb option)
+    /// resolves a few accents. `cargo test -- --ignored live_combos --nocapture`.
+    /// Diagnostic: drive libxkbcommon's state machine with the exact key
+    /// sequence the virtual keyboard sends (level-3 key held, slot key
+    /// tapped) and print the resulting keysyms.
+    #[test]
+    #[ignore]
+    fn live_state_simulation() {
+        let km = compile_active_keymap().expect("keymap");
+        let l3 = xkb::Keycode::new(u32::from(crate::xkb_custom::LEVEL3_CODE) + 8);
+        for (label, code) in [("é FK19", 188u16), ("û I219", 211), ("ú I219", 211), ("ü I222", 214)] {
+            let mut st = xkb::State::new(&km);
+            let with_l3 = !label.starts_with('ú') && !label.starts_with('ü');
+            if with_l3 {
+                st.update_key(l3, xkb::KeyDirection::Down);
+            }
+            let kc = xkb::Keycode::new(u32::from(code) + 8);
+            st.update_key(kc, xkb::KeyDirection::Down);
+            let syms: Vec<String> = st.key_get_syms(kc).iter().map(|s| xkb::keysym_get_name(*s)).collect();
+            let utf = st.key_get_utf8(kc);
+            eprintln!("{label} (l3 held: {with_l3}) -> syms {syms:?} utf8 {utf:?} mods 0x{:x}", st.serialize_mods(xkb::STATE_MODS_EFFECTIVE));
+        }
+    }
+
+    /// Diagnostic: slot priority for the user's config and what overflows.
+    #[test]
+    #[ignore]
+    fn live_priority() {
+        let cfg = crate::config::load_config();
+        crate::mappings::init(&cfg.languages);
+        let all = crate::mappings::all_variant_chars();
+        let missing = chars_missing_from_base(&all);
+        eprintln!("priority ({}): {}", missing.len(), missing.iter().collect::<String>());
+        warm_combos();
+        let overflow: String = missing.iter().filter(|c| combo_for_char(**c).is_none()).collect();
+        eprintln!("overflow: {overflow}");
+    }
+
+    #[test]
+    #[ignore]
+    fn live_combos() {
+        warm_combos();
+        for c in ['é', 'ú', 'û', 'ù', 'ü', 'â', 'ç', 'ÿ', '€'] {
+            eprintln!("{c} -> {:?}", combo_for_char(c));
+        }
+    }
+
     #[test]
     fn letter_from_name_single_ascii() {
         assert_eq!(letter_from_name("a"), Some(MappingKey::A));

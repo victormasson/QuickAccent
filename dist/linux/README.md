@@ -40,7 +40,8 @@ sudo reboot
 Injection is always direct — no permission prompt, no clipboard. Accents your
 layout lacks (`é` on US, `É` on AZERTY…) are **added to the keymap** at
 startup: QuickAccent generates the xkb option `quickaccent:accents` in
-`~/.config/xkb/` (mapping them onto spare keycodes F13–F24) and enables it in
+`~/.config/xkb/` (mapping them onto spare keycodes: F13–F23 plus a few
+multimedia codes, F24 as the level-3 shift; 80 characters fit) and enables it in
 GNOME's `xkb-options`; the compositor reloads the keymap live and the
 characters are typed as ordinary keystrokes through uinput. Remove with
 `gsettings reset org.gnome.desktop.input-sources xkb-options` (restores your

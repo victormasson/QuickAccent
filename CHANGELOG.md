@@ -5,6 +5,25 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Some accents never appeared in Chromium apps (Brave, VS Code, Teams…).**
+  Characters beyond the F13–F23 slots were parked on evdev codes KEY_HP,
+  KEY_QUESTION and KEY_ALTERASE, which Chromium's key table does not know,
+  so it dropped the key events before looking up the character — û, ú, ü and
+  ÿ on a French/US setup, for instance, while ù on KEY_BASSBOOST worked. The
+  spare keys are now nine codes Chromium recognises but binds to nothing
+  (KEY_BASSBOOST, KEY_PRINT, KEY_KPPLUSMINUS, KEY_PHONE, KEY_EXIT, KEY_REDO,
+  KEY_SAVE, KEY_DOCUMENTS, KEY_BRIGHTNESS_AUTO), which also raises the keymap
+  capacity from 60 to 80 characters. The keymap is regenerated on the next
+  start.
+- **Keymap slots go to the characters that matter.** Slots used to be handed
+  out in codepoint order, so with a symbol set enabled € or ú could fall off
+  the end while rarer letters got in. Languages now come first (in config
+  order), then symbol sets, each in its own listed order, and caseless
+  symbols share a slot two by two instead of wasting the Shift level. With
+  French + Currency on a US layout everything but four currency signs fits.
+
 ## [1.3.0] - 2026-09-16
 
 ### Added

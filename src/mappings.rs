@@ -38,34 +38,56 @@ pub(crate) fn test_guard() -> std::sync::MutexGuard<'static, ()> {
     LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
+/// The sets currently compiled, in config order (slot priority).
+static ACTIVE_SETS: RwLock<Vec<String>> = RwLock::new(Vec::new());
+
 pub fn init(languages: &[String]) {
     let map = build_map(languages);
     *COMPILED_MAP.write().unwrap() = Some(map);
+    *ACTIVE_SETS.write().unwrap() = languages.to_vec();
 }
 
 pub fn reload(languages: &[String]) {
-    let map = build_map(languages);
-    *COMPILED_MAP.write().unwrap() = Some(map);
+    init(languages);
 }
 
 /// Every character any current mapping can produce, both cases (used to
 /// decide at startup whether direct-injection tiers beyond the keymap are
 /// needed).
 #[cfg(target_os = "linux")]
+/// Every character the picker can produce, most important first: the
+/// languages in config order, then the symbol sets (a language listed
+/// before a symbol set gets its slots first even where both extend the same
+/// key), each in its table's own order, uppercase right after lowercase. The
+/// custom keymap has a finite number of slots, so what overflows is the tail
+/// of the last set rather than whatever sorts last by codepoint (which used
+/// to drop € before rare letters).
 pub fn all_variant_chars() -> Vec<char> {
-    let guard = COMPILED_MAP.read().unwrap();
-    let Some(map) = guard.as_ref() else {
-        return Vec::new();
-    };
-    let mut out: Vec<char> = Vec::new();
-    for chars in map.values() {
-        for s in chars {
-            out.extend(s.chars());
-            out.extend(s.chars().flat_map(|c| c.to_uppercase()));
+    variant_chars_for(&ACTIVE_SETS.read().unwrap())
+}
+
+fn variant_chars_for(sets: &[String]) -> Vec<char> {
+    let is_language = |name: &str| LANGUAGES.contains(&name);
+    let ordered = sets
+        .iter()
+        .filter(|s| is_language(s))
+        .chain(sets.iter().filter(|s| !is_language(s)));
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for name in ordered {
+        let Some(data) = get_language_data(name) else {
+            continue;
+        };
+        for &(_, chars) in data {
+            for c in chars.iter().flat_map(|s| s.chars()) {
+                for ch in std::iter::once(c).chain(c.to_uppercase()) {
+                    if seen.insert(ch) {
+                        out.push(ch);
+                    }
+                }
+            }
         }
     }
-    out.sort_unstable();
-    out.dedup();
     out
 }
 
@@ -793,5 +815,19 @@ mod tests {
         if !french_w {
             assert!(get_variants(MappingKey::W, false).is_empty());
         }
+    }
+
+    #[test]
+    fn variant_chars_put_languages_before_symbol_sets() {
+        let chars = variant_chars_for(&["Currency".into(), "French".into()]);
+        let pos = |c: char| chars.iter().position(|x| *x == c).unwrap();
+        // French (a language) outranks Currency even though it is listed
+        // after it; within French, table order; € comes with the rest of
+        // Currency, and duplicates (French á vs Spanish á) appear once.
+        assert!(pos('à') < pos('À') && pos('À') < pos('â'));
+        assert!(pos('ÿ') < pos('฿'), "language letters first");
+        assert!(pos('฿') < pos('€') && pos('€') < pos('¥'), "currency in table order");
+        assert_eq!(chars.iter().filter(|c| **c == 'á').count(), 1);
+        assert!(variant_chars_for(&[]).is_empty());
     }
 }
