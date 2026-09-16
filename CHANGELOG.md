@@ -5,6 +5,8 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-09-16
+
 ### Added
 
 - **Custom palettes for "System" appearance.** `theme_light` / `theme_dark`

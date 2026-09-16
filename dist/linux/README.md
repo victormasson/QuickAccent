@@ -17,7 +17,7 @@ mismatch. Nothing downloaded is ever executed before verification.
 # Fedora / GNOME Wayland (Debian / Ubuntu: apt install wl-clipboard)
 sudo dnf install -y wl-clipboard
 
-git clone --branch v1.2.0 --depth 1 https://github.com/victormasson/QuickAccent
+git clone --branch v1.3.0 --depth 1 https://github.com/victormasson/QuickAccent
 QuickAccent/dist/linux/install.sh
 sudo reboot
 ```

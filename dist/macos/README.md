@@ -7,7 +7,7 @@ for that same tag, verifies it against `SHA256SUMS` (and the Sigstore
 attestation when `gh` is logged in), and stops on any mismatch:
 
 ```bash
-git clone --branch v1.2.0 --depth 1 https://github.com/victormasson/QuickAccent
+git clone --branch v1.3.0 --depth 1 https://github.com/victormasson/QuickAccent
 QuickAccent/dist/macos/install.sh
 open ~/Applications/QuickAccent.app
 ```

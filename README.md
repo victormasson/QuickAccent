@@ -54,7 +54,7 @@ downloads the tarball for that same tag, verifies it against `SHA256SUMS`
 mismatch:
 
 ```bash
-git clone --branch v1.2.0 --depth 1 https://github.com/victormasson/QuickAccent
+git clone --branch v1.3.0 --depth 1 https://github.com/victormasson/QuickAccent
 QuickAccent/dist/linux/install.sh
 sudo reboot
 ```
@@ -97,7 +97,7 @@ for the Omarchy shell in [dist/omarchy/](dist/omarchy/).
 ### macOS (universal, no Rust)
 
 ```bash
-git clone --branch v1.2.0 --depth 1 https://github.com/victormasson/QuickAccent
+git clone --branch v1.3.0 --depth 1 https://github.com/victormasson/QuickAccent
 QuickAccent/dist/macos/install.sh    # verifies the asset against SHA256SUMS
 open ~/Applications/QuickAccent.app
 ```

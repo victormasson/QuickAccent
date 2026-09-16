@@ -32,7 +32,7 @@ To check the release asset the package is pinned to (optional, needs
 `gh auth login`):
 
 ```bash
-gh release download v1.2.0 --repo victormasson/QuickAccent -p 'quickaccent-linux-x86_64.tar.gz' -p SHA256SUMS
+gh release download v1.3.0 --repo victormasson/QuickAccent -p 'quickaccent-linux-x86_64.tar.gz' -p SHA256SUMS
 sha256sum -c --ignore-missing SHA256SUMS
 gh attestation verify quickaccent-linux-x86_64.tar.gz --repo victormasson/QuickAccent
 yay -G quickaccent-bin && grep sha256sums quickaccent-bin/PKGBUILD   # same digest as SHA256SUMS

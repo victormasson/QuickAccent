@@ -1,6 +1,6 @@
 pkgbase = quickaccent-bin
 	pkgdesc = Accent character picker: hold a letter, press Space, pick an accent (evdev grab + uinput injection)
-	pkgver = 1.2.0
+	pkgver = 1.3.0
 	pkgrel = 1
 	url = https://github.com/victormasson/QuickAccent
 	install = quickaccent.install
@@ -15,7 +15,7 @@ pkgbase = quickaccent-bin
 	optdepends = wl-clipboard: emergency paste fallback when the keymap cannot be extended
 	provides = quickaccent
 	conflicts = quickaccent
-	source = quickaccent-1.2.0.tar.gz::https://github.com/victormasson/QuickAccent/releases/download/v1.2.0/quickaccent-linux-x86_64.tar.gz
-	sha256sums = aaf1d431ea143517cf62998e4285e7feb5d04403a452485d4448c764c2a2c2a5
+	source = quickaccent-1.3.0.tar.gz::https://github.com/victormasson/QuickAccent/releases/download/v1.3.0/quickaccent-linux-x86_64.tar.gz
+	sha256sums = UPDATE-WITH-updpkgsums-AFTER-TAGGING
 
 pkgname = quickaccent-bin
