@@ -21,6 +21,20 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 - **Full Settings.** Hold delay, input time and activation key from
   `config.toml` are editable in Settings and apply immediately.
 
+### Fixed
+
+- **Hyprland: overlay missing or misplaced on some monitors.** The overlay is
+  an X11 window, but Hyprland lays XWayland monitors out on its own terms
+  (packed left to right from x=0 in monitor order, at physical size with
+  `xwayland:force_zero_scaling`), so the logical coordinates from `hyprctl
+  activewindow` only matched the X screen for a plain left-to-right layout at
+  scale 1. A monitor above or below the first, out of order, or scaled sent
+  the overlay elsewhere or off the X screen. The anchor is now mapped through
+  XWayland's RandR layout (matched by output name) and the overlay is drawn at
+  that monitor's scale. winit's own guess of an X11 scale factor, taken from
+  the monitor under the mouse pointer, is pinned to 1 on Hyprland since it
+  moved the window too.
+
 ## [1.2.0] - 2026-09-14
 
 ### Added
