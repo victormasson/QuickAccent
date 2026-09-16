@@ -1,4 +1,5 @@
-//! Session-bus API the GNOME Shell panel menu calls (Settings… / Quit).
+//! Session-bus API the GNOME Shell panel menu, `quickaccent --settings` and
+//! a second launch of the app call (Settings… / Quit).
 
 use zbus::connection::Builder;
 use zbus::interface;
@@ -48,5 +49,16 @@ async fn export() -> zbus::Result<()> {
         .build()
         .await?;
     std::future::pending::<()>().await;
+    Ok(())
+}
+
+const NAME: &str = "io.github.victormasson.QuickAccent";
+const PATH: &str = "/io/github/victormasson/QuickAccent";
+
+/// Call `OpenSettings` or `Quit` on the running daemon. Errors when no
+/// daemon owns the name.
+pub fn call_remote(method: &str) -> zbus::Result<()> {
+    let conn = zbus::blocking::Connection::session()?;
+    conn.call_method(Some(NAME), PATH, Some(NAME), method, &())?;
     Ok(())
 }

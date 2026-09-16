@@ -67,6 +67,19 @@ systemctl --user restart quickaccent.service
 
 **Security:** `input` can read all keystrokes. Trusted accounts only.
 
+## Settings without a panel icon (Hyprland and other desktops)
+
+There is no top-bar menu outside GNOME. Instead, launching QuickAccent while
+the daemon runs opens its Settings window over D-Bus (click the app in your
+launcher or dock), the desktop entry has *Settings* / *Quit QuickAccent*
+actions for launchers that show them, `quickaccent --settings` and
+`quickaccent --quit` do the same from a terminal, and a right-click on the
+picker opens Settings too. On Hyprland the Settings window (class
+`quickaccent-settings`) is floated and centred by a runtime window rule that
+QuickAccent applies at startup and after each config reload; the persistent
+form for `~/.config/hypr/windows.lua` is
+`hl.window_rule({ match = { class = "quickaccent-settings" }, float = true, center = true })`.
+
 ## Multi-monitor overlay (GNOME)
 
 Wayland hides window positions from apps, so QuickAccent self-installs a

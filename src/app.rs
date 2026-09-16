@@ -278,6 +278,9 @@ pub enum Message {
     WindowOpened(window::Id),
     WindowClosed(window::Id),
     OpenSettings,
+    /// Right mouse button pressed in a window of ours (the picker has no
+    /// panel icon on Hyprland, so this is its way to Settings).
+    RightClicked(window::Id),
     Quit,
     ToggleLanguage(String, bool),
     SetTheme(ThemeChoice),
@@ -497,6 +500,12 @@ impl App {
                 }
                 Task::none()
             }
+            Message::RightClicked(id) => {
+                if self.overlay_window == Some(id) {
+                    return Task::done(Message::OpenSettings);
+                }
+                Task::none()
+            }
             Message::OpenSettings => {
                 if let Some(id) = self.settings_window {
                     #[cfg(target_os = "macos")]
@@ -504,14 +513,23 @@ impl App {
                     return window::gain_focus(id);
                 }
                 self.refresh_from_config();
-                let (id, open_task) = window::open(window::Settings {
+                #[allow(unused_mut)]
+                let mut settings = window::Settings {
                     size: iced::Size::new(560.0, 720.0),
                     min_size: Some(iced::Size::new(420.0, 360.0)),
                     position: window::Position::Centered,
                     level: window::Level::Normal,
                     exit_on_close_request: true,
                     ..Default::default()
-                });
+                };
+                #[cfg(target_os = "linux")]
+                {
+                    // Own class: Hyprland floats it (`hyprland.rs`) and the
+                    // overlay's no_focus rule stays off it.
+                    settings.platform_specific.application_id =
+                        crate::hyprland::SETTINGS_CLASS.into();
+                }
+                let (id, open_task) = window::open(settings);
                 self.settings_window = Some(id);
                 open_task.map(Message::WindowOpened)
             }
@@ -803,6 +821,12 @@ impl App {
             Subscription::run(grab_subscription),
             Subscription::run(ui_subscription),
             window::close_events().map(Message::WindowClosed),
+            iced::event::listen_with(|event, _status, window| match event {
+                iced::Event::Mouse(iced::mouse::Event::ButtonPressed(
+                    iced::mouse::Button::Right,
+                )) => Some(Message::RightClicked(window)),
+                _ => None,
+            }),
         ])
     }
 

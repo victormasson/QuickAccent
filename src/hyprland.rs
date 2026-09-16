@@ -112,6 +112,10 @@ pub fn persistent_hint(option: &str, value: &str) -> String {
 /// `application_id = "quickaccent"`).
 pub const OVERLAY_CLASS: &str = "quickaccent";
 
+/// Window class of the Settings window: distinct from the overlay's so the
+/// `no_focus` rule below cannot hit it, and so it can get its own rule.
+pub const SETTINGS_CLASS: &str = "quickaccent-settings";
+
 /// Keep Hyprland's keyboard focus off the accent overlay.
 ///
 /// The overlay is focus-proofed with X11 `override_redirect` (`app.rs`),
@@ -128,22 +132,39 @@ pub fn ensure_overlay_no_focus() {
     if !is_running() {
         return;
     }
-    // Try the running config's own parser first, fall back to the other.
-    // The branches look identical to clippy but the `||` order is the point:
-    // short-circuit means "prefer this parser".
-    #[allow(clippy::if_same_then_else)]
-    let applied = if uses_lua_config() {
-        set_overlay_no_focus_lua() || set_overlay_no_focus_legacy()
-    } else {
-        set_overlay_no_focus_legacy() || set_overlay_no_focus_lua()
-    };
-    if !applied {
+    let legacy = format!("nofocus, class:^({OVERLAY_CLASS})$");
+    if !apply_window_rule(&overlay_no_focus_lua(), &[&legacy]) {
         eprintln!(
             "[QuickAccent] could not keep Hyprland's focus off the accent overlay; \
              picker accents may be swallowed. Add to ~/.config/hypr/windows.lua \
              (Omarchy) or hyprland.lua, then `hyprctl reload`:\n  {}",
             overlay_no_focus_lua()
         );
+    }
+    // The Settings window is an ordinary X11 toplevel that Hyprland would
+    // tile full-size; float it, centred, like the dialog it is.
+    let float = format!("float, class:^({SETTINGS_CLASS})$");
+    let center = format!("center, class:^({SETTINGS_CLASS})$");
+    if !apply_window_rule(&settings_float_lua(), &[&float, &center]) {
+        eprintln!(
+            "[QuickAccent] could not make the Settings window float on Hyprland. \
+             Add to ~/.config/hypr/windows.lua (Omarchy) or hyprland.lua, then \
+             `hyprctl reload`:\n  {}",
+            settings_float_lua()
+        );
+    }
+}
+
+/// Apply a window rule through the running config's own parser first, then
+/// the other one (`hyprctl keyword` on a Lua config only *says* it failed).
+/// The branches look identical to clippy but the `||` order is the point:
+/// short-circuit means "prefer this parser".
+#[allow(clippy::if_same_then_else)]
+fn apply_window_rule(lua: &str, legacy_rules: &[&str]) -> bool {
+    if uses_lua_config() {
+        set_rule_lua(lua) || set_rules_legacy(legacy_rules)
+    } else {
+        set_rules_legacy(legacy_rules) || set_rule_lua(lua)
     }
 }
 
@@ -153,17 +174,24 @@ fn overlay_no_focus_lua() -> String {
     format!("hl.window_rule({{ match = {{ class = \"{OVERLAY_CLASS}\" }}, no_focus = true }})")
 }
 
-fn set_overlay_no_focus_lua() -> bool {
-    hyprctl(&["eval", &overlay_no_focus_lua()])
+fn settings_float_lua() -> String {
+    format!(
+        "hl.window_rule({{ match = {{ class = \"{SETTINGS_CLASS}\" }}, float = true, center = true }})"
+    )
+}
+
+fn set_rule_lua(snippet: &str) -> bool {
+    hyprctl(&["eval", snippet])
         .map(|r| !is_error_response(&r))
         .unwrap_or(false)
 }
 
-fn set_overlay_no_focus_legacy() -> bool {
-    let rule = format!("nofocus, class:^({OVERLAY_CLASS})$");
-    hyprctl(&["keyword", "windowrulev2", &rule])
-        .map(|r| is_ok_response(&r))
-        .unwrap_or(false)
+fn set_rules_legacy(rules: &[&str]) -> bool {
+    rules.iter().all(|rule| {
+        hyprctl(&["keyword", "windowrulev2", rule])
+            .map(|r| is_ok_response(&r))
+            .unwrap_or(false)
+    })
 }
 
 /// Hyprland re-reads its config on `hyprctl reload` — and Omarchy triggers
@@ -354,6 +382,11 @@ mod tests {
             r#"hl.window_rule({ match = { class = "quickaccent" }, no_focus = true })"#
         );
         assert_eq!(OVERLAY_CLASS, "quickaccent");
+        assert_eq!(
+            settings_float_lua(),
+            r#"hl.window_rule({ match = { class = "quickaccent-settings" }, float = true, center = true })"#
+        );
+        assert_ne!(SETTINGS_CLASS, OVERLAY_CLASS, "no_focus must not hit the Settings window");
     }
 
     #[test]

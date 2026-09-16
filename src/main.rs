@@ -37,6 +37,11 @@ Usage: quickaccent [OPTIONS]
 Options:
   -h, --help       Print this help
   -V, --version    Print version
+      --settings   Open the Settings window of the running daemon (Linux)
+      --quit       Stop the running daemon (Linux)
+
+Launching quickaccent while the daemon is already running opens its
+Settings window, so a launcher or dock entry doubles as the settings menu.
 
 Runs as a background daemon: no window is shown until the picker opens.
 Config: ~/.config/quickaccent/config.toml (hot-reloaded)
@@ -55,6 +60,21 @@ fn main() -> iced::Result {
     if args.iter().any(|a| a == "--help" || a == "-h") {
         print!("{HELP}");
         return Ok(());
+    }
+
+    // Remote control of the running daemon over D-Bus.
+    #[cfg(target_os = "linux")]
+    for (flag, method) in [("--settings", "OpenSettings"), ("--quit", "Quit")] {
+        if args.iter().any(|a| a == flag) {
+            if let Err(e) = dbus_service::call_remote(method) {
+                eprintln!(
+                    "[QuickAccent] no running daemon to talk to ({e}). \
+                     Start it with: systemctl --user start quickaccent"
+                );
+                std::process::exit(1);
+            }
+            return Ok(());
+        }
     }
 
     // Diagnostic mode: quickaccent --portal-probe [char]
@@ -207,7 +227,8 @@ fn setup_direct_typing() {
 /// Refuse to run twice. A second instance — typically the app-grid icon
 /// clicked while the systemd service is running — would lose the evdev grab
 /// race with a silent EBUSY and leave everyone confused about which copy is
-/// live. When the *service* starts and finds a stray holding the lock, the
+/// live; on Linux it opens the running daemon's Settings window instead.
+/// When the *service* starts and finds a stray holding the lock, the
 /// service wins: the stray is asked to quit (same user, same binary).
 fn acquire_single_instance_lock() -> bool {
     use std::io::Write;
@@ -264,6 +285,14 @@ fn acquire_single_instance_lock() -> bool {
             // leaving the service silently dead.
             eprintln!("[QuickAccent] could not take over from PID {holder}; retrying via systemd");
             std::process::exit(1);
+        }
+        // A launcher / app-grid click while the daemon runs: the useful
+        // thing to do is show its Settings window (Hyprland has no panel
+        // menu; on GNOME the top-bar menu does the same).
+        #[cfg(target_os = "linux")]
+        if dbus_service::call_remote("OpenSettings").is_ok() {
+            eprintln!("[QuickAccent] already running (PID {holder}) — opened its Settings window.");
+            return false;
         }
         eprintln!(
             "[QuickAccent] already running (PID {holder}) — nothing to do.\n{}",

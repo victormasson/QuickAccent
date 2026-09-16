@@ -9,3 +9,12 @@ Categories=Utility;Accessibility;
 StartupNotify=false
 X-GNOME-Autostart-enabled=true
 X-GNOME-UsesNotifications=false
+Actions=Settings;Quit;
+
+[Desktop Action Settings]
+Name=Settings
+Exec=quickaccent --settings
+
+[Desktop Action Quit]
+Name=Quit QuickAccent
+Exec=quickaccent --quit

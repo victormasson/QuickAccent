@@ -145,9 +145,11 @@ languages = ["French", "German", "Spanish"]
 # chip_radius = 8
 ```
 
-On macOS the *Settings…* window in the menu-bar menu (and on GNOME the top-bar
-*QuickAccent* menu) edits every key above for you (only those lines are
-rewritten; comments and other keys are kept).
+The *Settings…* window edits every key above for you (only those lines are
+rewritten; comments and other keys are kept). Open it from the menu-bar menu
+(macOS), the top-bar *QuickAccent* menu (GNOME), or on any Linux desktop by
+launching QuickAccent again while it runs (the launcher entry, its *Settings*
+desktop action, or `quickaccent --settings`), or by right-clicking the picker.
 
 **Languages:** Catalan, CrimeanTatar, Croatian, Czech, Danish, Dutch, Esperanto, Estonian, Finnish, French, German, Greek, Hungarian, IPA, Iceland, Irish, Italian, Kurdish, Lithuanian, Maltese, Maori, Norwegian, Pinyin, Polish, Portuguese, ProtoIndoEuropean, Romanian, Romanization, ScottishGaelic, Serbian, Slovak, Slovenian, Spanish, Swedish, Turkish, Vietnamese, Welsh
 

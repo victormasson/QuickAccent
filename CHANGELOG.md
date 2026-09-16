@@ -7,6 +7,13 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Settings without a panel icon.** Launching QuickAccent while the daemon
+  runs now opens its Settings window over D-Bus instead of exiting with
+  "already running", so the launcher or dock entry works as the settings
+  menu on Hyprland and other desktops without the GNOME top-bar menu. The
+  desktop entry gains *Settings* and *Quit QuickAccent* actions,
+  `quickaccent --settings` / `--quit` do the same from a terminal, and a
+  right-click on the picker opens Settings.
 - **GNOME top-bar menu.** The helper Shell extension now shows a *QuickAccent*
   panel button with *Settings…* and *Quit QuickAccent*, matching the macOS
   menu-bar item. Settings and quit go over D-Bus to the running daemon.
