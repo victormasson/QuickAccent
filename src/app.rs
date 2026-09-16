@@ -1,5 +1,6 @@
 use iced::futures::SinkExt;
 use iced::widget::{checkbox, column, container, pick_list, row, scrollable, slider, text};
+use iced::widget::{column as column_of, row as row_of};
 
 use crate::config::{ActivationKey, ThemeChoice};
 use iced::window;
@@ -234,8 +235,13 @@ mod tests {
         assert_eq!(window_width_for(&[]), PADDING);
     }
 
+    /// `OVERLAY_ANCHOR` is process-global: tests that set it must not
+    /// interleave.
+    static ANCHOR_TESTS: Mutex<()> = Mutex::new(());
+
     #[test]
     fn overlay_follows_window_in_global_logical_coordinates() {
+        let _guard = ANCHOR_TESTS.lock().unwrap_or_else(|e| e.into_inner());
         // Screens left of or above the primary screen have negative origins.
         for (anchor, expected) in [
             ((2000.0, 100.0, 1000.0, 800.0), (2400.0, 465.0)),
@@ -257,6 +263,7 @@ mod tests {
 
     #[test]
     fn scaled_anchor_sizes_and_centers_the_overlay_in_window_units() {
+        let _guard = ANCHOR_TESTS.lock().unwrap_or_else(|e| e.into_inner());
         // A 2× XWayland monitor: the window is twice as big in X pixels and
         // still centered on the anchor.
         set_overlay_placement(Some(Anchor { x: 3840.0, y: 0.0, width: 1000.0, height: 800.0, scale: 2.0 }));
@@ -284,6 +291,9 @@ pub enum Message {
     Quit,
     ToggleLanguage(String, bool),
     SetTheme(ThemeChoice),
+    /// Palettes used while `SetTheme(System)` (light / dark desktop).
+    SetThemeLight(ThemeChoice),
+    SetThemeDark(ThemeChoice),
     SetHoldDelay(f32),
     SetInputTime(f32),
     SetActivationKey(ActivationKey),
@@ -305,6 +315,9 @@ pub struct App {
     languages: Vec<String>,
     /// Appearance from config; `System` follows macOS when a window opens.
     theme_choice: ThemeChoice,
+    /// Palettes `System` resolves to on a light / dark desktop.
+    theme_light: ThemeChoice,
+    theme_dark: ThemeChoice,
     /// Resolved appearance for the open windows (macOS glass adapts to what is
     /// behind it; our text has to follow).
     dark: bool,
@@ -316,8 +329,12 @@ pub struct App {
     chip_radius: f32,
 }
 
-fn resolve_dark(choice: ThemeChoice) -> bool {
-    crate::theme::is_dark(choice)
+/// Whether the palette actually drawn is dark. `System` asks the desktop,
+/// then the answer is that of the palette it maps to (a dark palette picked
+/// for light desktops stays dark).
+fn resolve_dark(choice: ThemeChoice, light: ThemeChoice, dark: ThemeChoice) -> bool {
+    let effective = crate::theme::effective(choice, light, dark, crate::theme::is_dark(choice));
+    crate::theme::is_dark(effective)
 }
 
 fn settings_slider<'a>(
@@ -356,6 +373,8 @@ impl App {
         };
         let cfg = crate::config::read_config().unwrap_or_default();
         let theme_choice = cfg.theme_parsed();
+        let theme_light = cfg.theme_light_parsed();
+        let theme_dark = cfg.theme_dark_parsed();
         let activation_key = cfg.activation_key_parsed();
         (
             App {
@@ -366,7 +385,9 @@ impl App {
                 settings_window: None,
                 languages: cfg.languages,
                 theme_choice,
-                dark: resolve_dark(theme_choice),
+                theme_light,
+                theme_dark,
+                dark: resolve_dark(theme_choice, theme_light, theme_dark),
                 hold_delay_ms: cfg.hold_delay_ms,
                 input_time_ms: cfg.input_time_ms,
                 activation_key,
@@ -375,6 +396,20 @@ impl App {
                 chip_radius: cfg.chip_radius as f32,
             },
             boot,
+        )
+    }
+
+    fn resolve_dark(&self) -> bool {
+        resolve_dark(self.theme_choice, self.theme_light, self.theme_dark)
+    }
+
+    /// The palette drawn right now (see `theme::effective`).
+    fn effective_theme(&self) -> ThemeChoice {
+        crate::theme::effective(
+            self.theme_choice,
+            self.theme_light,
+            self.theme_dark,
+            crate::theme::is_dark(self.theme_choice),
         )
     }
 
@@ -400,7 +435,9 @@ impl App {
     fn refresh_from_config(&mut self) {
         let cfg = crate::config::read_config().unwrap_or_default();
         self.theme_choice = cfg.theme_parsed();
-        self.dark = resolve_dark(self.theme_choice);
+        self.theme_light = cfg.theme_light_parsed();
+        self.theme_dark = cfg.theme_dark_parsed();
+        self.dark = self.resolve_dark();
         self.hold_delay_ms = cfg.hold_delay_ms;
         self.input_time_ms = cfg.input_time_ms;
         self.activation_key = cfg.activation_key_parsed();
@@ -553,9 +590,25 @@ impl App {
             }
             Message::SetTheme(choice) => {
                 self.theme_choice = choice;
-                self.dark = resolve_dark(choice);
+                self.dark = self.resolve_dark();
                 if let Err(e) = crate::config::set_theme(choice) {
                     eprintln!("[QuickAccent] Failed to save theme: {e}");
+                }
+                self.sync_settings_appearance()
+            }
+            Message::SetThemeLight(choice) => {
+                self.theme_light = choice;
+                self.dark = self.resolve_dark();
+                if let Err(e) = crate::config::set_theme_light(choice) {
+                    eprintln!("[QuickAccent] Failed to save theme_light: {e}");
+                }
+                self.sync_settings_appearance()
+            }
+            Message::SetThemeDark(choice) => {
+                self.theme_dark = choice;
+                self.dark = self.resolve_dark();
+                if let Err(e) = crate::config::set_theme_dark(choice) {
+                    eprintln!("[QuickAccent] Failed to save theme_dark: {e}");
                 }
                 self.sync_settings_appearance()
             }
@@ -636,7 +689,7 @@ impl App {
         }
 
         let colors =
-            crate::theme::overlay_colors(self.theme_choice, self.dark, self.overlay_opacity);
+            crate::theme::overlay_colors(self.effective_theme(), self.dark, self.overlay_opacity);
         let chip = colors.chip;
         let chip_text = colors.chip_text;
         let selected = colors.selected;
@@ -728,11 +781,38 @@ impl App {
             .into()
         };
 
+        // Following the system: choose what "light" and "dark" mean.
+        let system_palettes: Vec<Element<'_, Message>> = if self.theme_choice == ThemeChoice::System {
+            vec![row_of![
+                column_of![
+                    text("Light desktop").size(13),
+                    pick_list(ThemeChoice::PALETTES, Some(self.theme_light), Message::SetThemeLight)
+                        .width(Length::Fill),
+                ]
+                .spacing(4)
+                .width(Length::Fill),
+                column_of![
+                    text("Dark desktop").size(13),
+                    pick_list(ThemeChoice::PALETTES, Some(self.theme_dark), Message::SetThemeDark)
+                        .width(Length::Fill),
+                ]
+                .spacing(4)
+                .width(Length::Fill),
+            ]
+            .spacing(12)
+            .into()]
+        } else {
+            Vec::new()
+        };
         let appearance: Element<'_, Message> = column(vec![
             text("Appearance").size(15).into(),
             pick_list(ThemeChoice::ALL, Some(self.theme_choice), Message::SetTheme)
                 .width(Length::Fill)
                 .into(),
+        ]
+        .into_iter()
+        .chain(system_palettes)
+        .chain(vec![
             settings_slider(
                 "Overlay opacity",
                 format!("{:.0}%", self.overlay_opacity * 100.0),
@@ -754,6 +834,7 @@ impl App {
                 slider(0.0..=16.0, self.chip_radius, Message::SetChipRadius).into(),
             ),
         ])
+        .collect::<Vec<Element<'_, Message>>>())
         .spacing(10)
         .into();
 
@@ -841,7 +922,7 @@ impl App {
     }
 
     pub fn theme(&self, _window_id: window::Id) -> Theme {
-        crate::theme::iced_theme(self.theme_choice, self.dark)
+        crate::theme::iced_theme(self.effective_theme(), self.dark)
     }
 
     /// Window backgrounds. The picker is see-through so rounded corners and

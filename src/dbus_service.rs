@@ -37,15 +37,36 @@ fn serve() {
             return;
         }
     };
-    if let Err(e) = rt.block_on(export()) {
-        eprintln!("[QuickAccent] D-Bus: {e}");
-    }
+    rt.block_on(async {
+        // The name may still be held by an instance the service is taking
+        // over from (it was just asked to quit) — keep trying rather than
+        // leaving the daemon unreachable for the rest of its life.
+        let mut attempt = 0u32;
+        loop {
+            match export().await {
+                Ok(()) => return,
+                Err(e) => {
+                    if attempt == 0 {
+                        eprintln!("[QuickAccent] D-Bus: {e} — retrying");
+                    }
+                    attempt += 1;
+                    tokio::time::sleep(std::time::Duration::from_secs(2.min(attempt as u64 * 2)))
+                        .await;
+                }
+            }
+        }
+    });
 }
 
 async fn export() -> zbus::Result<()> {
     let _conn = Builder::session()?
-        .name("io.github.victormasson.QuickAccent")?
-        .serve_at("/io/github/victormasson/QuickAccent", Service)?
+        // Nobody may take the name from a live daemon (zbus otherwise asks
+        // for ReplaceExisting/AllowReplacement, so a second copy would have
+        // silently stolen it and left the daemon unreachable).
+        .allow_name_replacements(false)
+        .replace_existing_names(false)
+        .name(NAME)?
+        .serve_at(PATH, Service)?
         .build()
         .await?;
     std::future::pending::<()>().await;

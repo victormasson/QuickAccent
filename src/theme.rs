@@ -22,6 +22,21 @@ fn rose_pine_palette(
     )
 }
 
+/// The palette to draw with: `System` follows the desktop, using the
+/// configured light or dark palette; anything else is itself.
+pub fn effective(
+    choice: ThemeChoice,
+    light: ThemeChoice,
+    dark: ThemeChoice,
+    system_is_dark: bool,
+) -> ThemeChoice {
+    match choice {
+        ThemeChoice::System if system_is_dark => dark,
+        ThemeChoice::System => light,
+        other => other,
+    }
+}
+
 pub fn iced_theme(choice: ThemeChoice, dark: bool) -> Theme {
     match choice {
         ThemeChoice::System | ThemeChoice::Light | ThemeChoice::Dark => {
@@ -151,6 +166,16 @@ mod tests {
             Theme::Light
         ));
         assert!(matches!(iced_theme(ThemeChoice::Dark, true), Theme::Dark));
+    }
+
+    #[test]
+    fn system_resolves_to_the_configured_palettes() {
+        let (l, d) = (ThemeChoice::RosePineDawn, ThemeChoice::CatppuccinMocha);
+        assert_eq!(effective(ThemeChoice::System, l, d, false), l);
+        assert_eq!(effective(ThemeChoice::System, l, d, true), d);
+        // A named choice ignores the system palettes.
+        assert_eq!(effective(ThemeChoice::Dracula, l, d, false), ThemeChoice::Dracula);
+        assert_eq!(effective(ThemeChoice::Light, l, d, true), ThemeChoice::Light);
     }
 
     #[test]

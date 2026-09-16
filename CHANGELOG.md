@@ -7,6 +7,10 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Custom palettes for "System" appearance.** `theme_light` / `theme_dark`
+  in `config.toml` (and two pick lists under *Appearance* in Settings while
+  *System* is selected) choose which palette a light or dark desktop maps
+  to, e.g. Rosé Pine Dawn by day and Catppuccin Mocha by night.
 - **Settings without a panel icon.** Launching QuickAccent while the daemon
   runs now opens its Settings window over D-Bus instead of exiting with
   "already running", so the launcher or dock entry works as the settings
@@ -30,6 +34,12 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Daemon could silently lose its D-Bus name.** zbus requests names with
+  replace-existing by default, so any second `quickaccent` process took the
+  name and, once gone, left the daemon unreachable for `--settings` and the
+  GNOME menu. The daemon now refuses replacement and keeps retrying the claim
+  while a previous instance is still shutting down; `QUICKACCENT_DEMO`
+  instances no longer touch the bus or the single-instance lock.
 - **Hyprland: overlay missing or misplaced on some monitors.** The overlay is
   an X11 window, but Hyprland lays XWayland monitors out on its own terms
   (packed left to right from x=0 in monitor order, at physical size with

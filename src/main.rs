@@ -91,7 +91,8 @@ fn main() -> iced::Result {
         }
     }
 
-    if !acquire_single_instance_lock() {
+    // Demo mode never grabs the keyboard, so it may run beside the daemon.
+    if std::env::var_os("QUICKACCENT_DEMO").is_none() && !acquire_single_instance_lock() {
         return Ok(());
     }
 
@@ -108,8 +109,11 @@ fn main() -> iced::Result {
     #[cfg(target_os = "linux")]
     linux_setup();
 
+    // Demo instances must not answer (or steal) the daemon's bus name.
     #[cfg(target_os = "linux")]
-    crate::dbus_service::start();
+    if std::env::var_os("QUICKACCENT_DEMO").is_none() {
+        crate::dbus_service::start();
+    }
 
     // QUICKACCENT_DEMO opens a window for inspection; a second instance must
     // not also take over the keyboard.

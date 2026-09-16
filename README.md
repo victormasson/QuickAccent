@@ -140,6 +140,8 @@ languages = ["French", "German", "Spanish"]
 # theme = "system"   # system | light | dark | dracula
                      # catppuccin-latte | catppuccin-frappe | catppuccin-macchiato | catppuccin-mocha
                      # rose-pine | rose-pine-moon | rose-pine-dawn
+# theme_light = "light"   # palettes used while theme = "system",
+# theme_dark = "dark"     # on a light / dark desktop (any value above but system)
 # overlay_opacity = 0.88
 # overlay_radius = 16
 # chip_radius = 8

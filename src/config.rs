@@ -55,6 +55,20 @@ pub enum ThemeChoice {
 }
 
 impl ThemeChoice {
+    /// Everything but `System`: the palettes `System` can resolve to.
+    pub const PALETTES: [ThemeChoice; 10] = [
+        ThemeChoice::Light,
+        ThemeChoice::Dark,
+        ThemeChoice::Dracula,
+        ThemeChoice::CatppuccinLatte,
+        ThemeChoice::CatppuccinFrappe,
+        ThemeChoice::CatppuccinMacchiato,
+        ThemeChoice::CatppuccinMocha,
+        ThemeChoice::RosePine,
+        ThemeChoice::RosePineMoon,
+        ThemeChoice::RosePineDawn,
+    ];
+
     pub const ALL: [ThemeChoice; 11] = [
         ThemeChoice::System,
         ThemeChoice::Light,
@@ -121,6 +135,11 @@ pub struct Config {
     pub activation_key: String,
     #[serde(default = "default_theme")]
     pub theme: String,
+    /// Palettes used while `theme = "system"`, for a light / dark desktop.
+    #[serde(default = "default_theme_light")]
+    pub theme_light: String,
+    #[serde(default = "default_theme_dark")]
+    pub theme_dark: String,
     #[serde(default = "default_overlay_opacity")]
     pub overlay_opacity: f64,
     #[serde(default = "default_overlay_radius")]
@@ -135,6 +154,14 @@ fn default_languages() -> Vec<String> {
 
 fn default_theme() -> String {
     "system".to_string()
+}
+
+fn default_theme_light() -> String {
+    "light".to_string()
+}
+
+fn default_theme_dark() -> String {
+    "dark".to_string()
 }
 
 fn default_input_time_ms() -> u64 {
@@ -171,20 +198,28 @@ impl Config {
     }
 
     pub fn theme_parsed(&self) -> ThemeChoice {
-        match self.theme.to_ascii_lowercase().as_str() {
-            "light" => ThemeChoice::Light,
-            "dark" => ThemeChoice::Dark,
-            "dracula" => ThemeChoice::Dracula,
-            "catppuccin-latte" => ThemeChoice::CatppuccinLatte,
-            "catppuccin-frappe" => ThemeChoice::CatppuccinFrappe,
-            "catppuccin-macchiato" => ThemeChoice::CatppuccinMacchiato,
-            "catppuccin-mocha" => ThemeChoice::CatppuccinMocha,
-            "rose-pine" => ThemeChoice::RosePine,
-            "rose-pine-moon" => ThemeChoice::RosePineMoon,
-            "rose-pine-dawn" => ThemeChoice::RosePineDawn,
-            _ => ThemeChoice::System,
-        }
+        parse_theme(&self.theme).unwrap_or(ThemeChoice::System)
     }
+
+    /// Palette for a light desktop while following the system; `system`
+    /// or garbage falls back to plain Light.
+    pub fn theme_light_parsed(&self) -> ThemeChoice {
+        parse_theme(&self.theme_light)
+            .filter(|c| *c != ThemeChoice::System)
+            .unwrap_or(ThemeChoice::Light)
+    }
+
+    /// Palette for a dark desktop while following the system.
+    pub fn theme_dark_parsed(&self) -> ThemeChoice {
+        parse_theme(&self.theme_dark)
+            .filter(|c| *c != ThemeChoice::System)
+            .unwrap_or(ThemeChoice::Dark)
+    }
+}
+
+fn parse_theme(value: &str) -> Option<ThemeChoice> {
+    let value = value.to_ascii_lowercase();
+    ThemeChoice::ALL.into_iter().find(|c| c.as_str() == value)
 }
 
 impl Default for Config {
@@ -195,6 +230,8 @@ impl Default for Config {
             hold_delay_ms: default_hold_delay_ms(),
             activation_key: default_activation_key(),
             theme: default_theme(),
+            theme_light: default_theme_light(),
+            theme_dark: default_theme_dark(),
             overlay_opacity: default_overlay_opacity(),
             overlay_radius: default_overlay_radius(),
             chip_radius: default_chip_radius(),
@@ -274,6 +311,10 @@ languages = ["French"]
 #   rose-pine, rose-pine-moon, rose-pine-dawn
 # Default: "system"
 # theme = "system"
+# With theme = "system", which palettes to use on a light / dark desktop
+# (any value above except "system"):
+# theme_light = "light"
+# theme_dark = "dark"
 
 # Picker overlay (GNOME-style rounded translucent panel), both Linux and macOS.
 # overlay_opacity = 0.88    # 0.35–1.0
@@ -316,6 +357,16 @@ pub fn set_languages(languages: &[String]) -> std::io::Result<()> {
 /// Persist the appearance choice; see [`set_languages`].
 pub fn set_theme(theme: ThemeChoice) -> std::io::Result<()> {
     set_value("theme", &format!("{:?}", theme.as_str()))
+}
+
+/// Persist the palette used on a light desktop while following the system.
+pub fn set_theme_light(theme: ThemeChoice) -> std::io::Result<()> {
+    set_value("theme_light", &format!("{:?}", theme.as_str()))
+}
+
+/// Persist the palette used on a dark desktop while following the system.
+pub fn set_theme_dark(theme: ThemeChoice) -> std::io::Result<()> {
+    set_value("theme_dark", &format!("{:?}", theme.as_str()))
 }
 
 pub fn set_activation_key(key: ActivationKey) -> std::io::Result<()> {
@@ -509,6 +560,22 @@ mod tests {
             ThemeChoice::Light
         );
         assert_eq!(Config::default().theme_parsed(), ThemeChoice::System);
+        // System-mode palettes: defaults, named values, and "system" itself
+        // is not allowed there.
+        let d = Config::default();
+        assert_eq!(d.theme_light_parsed(), ThemeChoice::Light);
+        assert_eq!(d.theme_dark_parsed(), ThemeChoice::Dark);
+        let c = parse_config_str(
+            "theme_light = \"Rose-Pine-Dawn\"\ntheme_dark = \"catppuccin-mocha\"\n",
+        )
+        .unwrap();
+        assert_eq!(c.theme_light_parsed(), ThemeChoice::RosePineDawn);
+        assert_eq!(c.theme_dark_parsed(), ThemeChoice::CatppuccinMocha);
+        let c = parse_config_str("theme_light = \"system\"\ntheme_dark = \"nope\"\n").unwrap();
+        assert_eq!(c.theme_light_parsed(), ThemeChoice::Light);
+        assert_eq!(c.theme_dark_parsed(), ThemeChoice::Dark);
+        assert!(!ThemeChoice::PALETTES.contains(&ThemeChoice::System));
+        assert_eq!(ThemeChoice::PALETTES.len() + 1, ThemeChoice::ALL.len());
         assert_eq!(
             parse_config_str("theme = \"weird\"\n")
                 .unwrap()
