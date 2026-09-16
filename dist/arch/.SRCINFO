@@ -16,6 +16,6 @@ pkgbase = quickaccent-bin
 	provides = quickaccent
 	conflicts = quickaccent
 	source = quickaccent-1.3.0.tar.gz::https://github.com/victormasson/QuickAccent/releases/download/v1.3.0/quickaccent-linux-x86_64.tar.gz
-	sha256sums = UPDATE-WITH-updpkgsums-AFTER-TAGGING
+	sha256sums = c0950e158ec086532f65302f2dabe109566ddef2e4b4849b352e27de591e9c95
 
 pkgname = quickaccent-bin
