@@ -142,12 +142,18 @@ pub struct Config {
     pub theme_dark: String,
     #[serde(default = "default_items_per_page")]
     pub items_per_page: usize,
+    #[serde(default = "default_show_unicode_description")]
+    pub show_unicode_description: bool,
     #[serde(default = "default_overlay_opacity")]
     pub overlay_opacity: f64,
     #[serde(default = "default_overlay_radius")]
     pub overlay_radius: f64,
     #[serde(default = "default_chip_radius")]
     pub chip_radius: f64,
+}
+
+fn default_show_unicode_description() -> bool {
+    true
 }
 
 fn default_items_per_page() -> usize {
@@ -239,6 +245,7 @@ impl Default for Config {
             theme_light: default_theme_light(),
             theme_dark: default_theme_dark(),
             items_per_page: default_items_per_page(),
+            show_unicode_description: default_show_unicode_description(),
             overlay_opacity: default_overlay_opacity(),
             overlay_radius: default_overlay_radius(),
             chip_radius: default_chip_radius(),
@@ -261,8 +268,8 @@ pub fn load_config() -> Config {
     match std::fs::read_to_string(&path) {
         Ok(contents) => match toml::from_str::<Config>(&contents) {
             Ok(config) => {
-                eprintln!("[QuickAccent] Loaded config: languages = {:?}, input_time_ms = {}, hold_delay_ms = {}, activation_key = {}, items_per_page = {}",
-                    config.languages, config.input_time_ms, config.hold_delay_ms, config.activation_key, config.items_per_page);
+                eprintln!("[QuickAccent] Loaded config: languages = {:?}, input_time_ms = {}, hold_delay_ms = {}, activation_key = {}, items_per_page = {}, show_unicode_description = {}",
+                    config.languages, config.input_time_ms, config.hold_delay_ms, config.activation_key, config.items_per_page, config.show_unicode_description);
                 config
             }
             Err(e) => {
@@ -300,6 +307,9 @@ languages = ["French"]
 
 # Maximum choices visible per page. 0 shows all choices (default). Restart to apply.
 # items_per_page = 0
+
+# Show the selected character's Unicode code point and name. Restart to apply.
+# show_unicode_description = true
 
 # Minimum time (ms) the letter must be held before accent is committed.
 # If released sooner, it's treated as a false start and the trigger key
@@ -610,6 +620,19 @@ mod tests {
         }
         for value in ["-1", "1.5", "\"12\""] {
             assert!(parse_config_str(&format!("items_per_page = {value}")).is_err());
+        }
+    }
+
+    #[test]
+    fn unicode_description_defaults_and_validation() {
+        assert!(Config::default().show_unicode_description);
+        assert!(parse_config_str("").unwrap().show_unicode_description);
+        for enabled in [false, true] {
+            let config = parse_config_str(&format!("show_unicode_description = {enabled}")).unwrap();
+            assert_eq!(config.show_unicode_description, enabled);
+        }
+        for value in ["0", "1", "\"false\""] {
+            assert!(parse_config_str(&format!("show_unicode_description = {value}")).is_err());
         }
     }
 }

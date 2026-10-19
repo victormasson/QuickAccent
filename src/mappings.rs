@@ -763,6 +763,19 @@ mod tests {
     }
 
     #[test]
+    fn every_selectable_character_has_a_unicode_name() {
+        for name in LANGUAGES.iter().chain(SYMBOL_SETS) {
+            for (_, choices) in get_language_data(name).unwrap() {
+                for choice in *choices {
+                    for ch in choice.chars().chain(choice.to_uppercase().chars()) {
+                        assert!(unicode_names2::name(ch).is_some(), "{name}: U+{:04X}", ch as u32);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn french_e_has_accents() {
         let _guard = test_guard();
         init(&["French".into()]);

@@ -48,8 +48,52 @@ const CELL_PADDING: f32 = 14.0;
 const CELL_SPACING: f32 = 4.0;
 // Outer padding (20px) plus a little spare room for rounding.
 const PADDING: f32 = 28.0;
-const WINDOW_HEIGHT: f32 = 70.0;
+const PICKER_ROW_HEIGHT: f32 = 70.0;
 const PAGE_COUNTER_WIDTH: f32 = 80.0;
+const DESCRIPTION_SIZE: f32 = 12.0;
+const DESCRIPTION_SPACING: f32 = 6.0;
+const DESCRIPTION_MAX_WIDTH: f32 = 640.0;
+
+fn character_description(variant: &str) -> String {
+    variant.chars().map(|ch| {
+        let name = unicode_names2::name(ch)
+            .map(|name| name.to_string())
+            .unwrap_or_else(|| "UNNAMED CHARACTER".into());
+        format!("(U+{:04X}) {name}", ch as u32)
+    }).collect::<Vec<_>>().join(" · ")
+}
+
+fn description_bounds(description: &str, width: f32) -> iced::Size {
+    use iced::advanced::{graphics::text::Paragraph, text::{Paragraph as _, Text}};
+    Paragraph::with_text(Text {
+        content: description,
+        bounds: iced::Size::new(width, f32::INFINITY),
+        size: DESCRIPTION_SIZE.into(),
+        line_height: Default::default(),
+        font: iced::Font::DEFAULT,
+        horizontal_alignment: iced::alignment::Horizontal::Center,
+        vertical_alignment: iced::alignment::Vertical::Center,
+        shaping: text::Shaping::Advanced,
+        wrapping: text::Wrapping::Word,
+    }).min_bounds()
+}
+
+fn overlay_size_for(variants: &[String], items_per_page: usize, show_unicode_description: bool) -> iced::Size {
+    if !show_unicode_description {
+        return iced::Size::new(window_width_for(variants, items_per_page), PICKER_ROW_HEIGHT);
+    }
+    let descriptions: Vec<_> = variants.iter().map(|v| character_description(v)).collect();
+    let longest = descriptions.iter()
+        .map(|d| description_bounds(d, f32::INFINITY).width.ceil() + PADDING)
+        .fold(PADDING, f32::max);
+    let width = window_width_for(variants, items_per_page)
+        .max(longest.min(DESCRIPTION_MAX_WIDTH));
+    // Reserve the tallest wrapped description across every page, not just the selection.
+    let description_height = descriptions.iter()
+        .map(|d| description_bounds(d, width - 20.0).height.ceil())
+        .fold(0.0, f32::max);
+    iced::Size::new(width, PICKER_ROW_HEIGHT + DESCRIPTION_SPACING + description_height)
+}
 
 fn window_width_for(variants: &[String], items_per_page: usize) -> f32 {
     if items_per_page == 0 {
@@ -158,15 +202,15 @@ fn overlay_anchor() -> Option<Anchor> {
     *OVERLAY_ANCHOR.lock().unwrap()
 }
 
-/// Window size in window-system units for a `width` logical overlay.
-fn overlay_size(width: f32, scale: f32) -> iced::Size {
-    iced::Size::new(width * scale, WINDOW_HEIGHT * scale)
+/// Window size in window-system units for a `size` logical overlay.
+fn overlay_size(size: iced::Size, scale: f32) -> iced::Size {
+    size * scale
 }
 
-fn overlay_position(width: f32) -> window::Position {
+fn overlay_position(size: iced::Size) -> window::Position {
     match overlay_anchor() {
         Some(a) => {
-            let size = overlay_size(width, a.scale);
+            let size = overlay_size(size, a.scale);
             window::Position::Specific(iced::Point::new(
                 a.x + (a.width - size.width) / 2.0,
                 a.y + (a.height - size.height) / 2.0,
@@ -176,15 +220,22 @@ fn overlay_position(width: f32) -> window::Position {
     }
 }
 
-fn overlay_settings(width: f32) -> window::Settings {
+fn resized_centered_origin(origin: iced::Point, old_size: iced::Size, size: iced::Size) -> iced::Point {
+    iced::Point::new(
+        origin.x + (old_size.width - size.width) / 2.0,
+        origin.y + (old_size.height - size.height) / 2.0,
+    )
+}
+
+fn overlay_settings(size: iced::Size) -> window::Settings {
     let scale = overlay_anchor().map_or(1.0, |a| a.scale);
     #[allow(unused_mut)]
     let mut settings = window::Settings {
-        size: overlay_size(width, scale),
+        size: overlay_size(size, scale),
         decorations: false,
         transparent: true,
         level: window::Level::AlwaysOnTop,
-        position: overlay_position(width),
+        position: overlay_position(size),
         ..Default::default()
     };
     #[cfg(target_os = "linux")]
@@ -198,6 +249,95 @@ fn overlay_settings(width: f32) -> window::Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn descriptions_identify_exact_code_points_without_display_helpers() {
+        for (variant, expected) in [
+            ("ţ", "(U+0163) LATIN SMALL LETTER T WITH CEDILLA"),
+            ("Ţ", "(U+0162) LATIN CAPITAL LETTER T WITH CEDILLA"),
+            ("\u{0301}", "(U+0301) COMBINING ACUTE ACCENT"),
+            ("ꭰ", "(U+AB70) CHEROKEE SMALL LETTER A"),
+            ("𐓘", "(U+104D8) OSAGE SMALL LETTER A"),
+            ("𑪰", "(U+11AB0) CANADIAN SYLLABICS NATTILIK HI"),
+            ("אַ", "(U+05D0) HEBREW LETTER ALEF · (U+05B7) HEBREW POINT PATAH"),
+            ("°C", "(U+00B0) DEGREE SIGN · (U+0043) LATIN CAPITAL LETTER C"),
+            ("\u{e000}", "(U+E000) UNNAMED CHARACTER"),
+            ("", ""),
+        ] {
+            assert_eq!(character_description(variant), expected);
+        }
+    }
+
+    #[test]
+    fn description_follows_selection_pages_case_and_close() {
+        // An existing logical window makes update return tasks without opening a native window.
+        let cfg = crate::config::Config::default();
+        let mut app = App {
+            items_per_page: 1,
+            show_unicode_description: true,
+            description_height: 0.0,
+            variants: Vec::new(),
+            selected_index: 0,
+            overlay_window: Some(window::Id::unique()),
+            settings_window: None,
+            languages: Vec::new(),
+            theme_choice: ThemeChoice::Dark,
+            theme_light: ThemeChoice::Light,
+            theme_dark: ThemeChoice::Dark,
+            overlay_scale: 1.0,
+            dark: true,
+            hold_delay_ms: cfg.hold_delay_ms,
+            input_time_ms: cfg.input_time_ms,
+            activation_key: cfg.activation_key_parsed(),
+            overlay_opacity: cfg.overlay_opacity as f32,
+            overlay_radius: cfg.overlay_radius as f32,
+            chip_radius: cfg.chip_radius as f32,
+        };
+        let _ = app.update(Message::ShowOverlay(vec!["ţ".into(), "אַ".into()], 0));
+        assert_eq!(app.selected_description(), "(U+0163) LATIN SMALL LETTER T WITH CEDILLA");
+        let height = app.description_height;
+        let _ = app.update(Message::UpdateSelection(1));
+        assert_eq!(app.selected_description(), "(U+05D0) HEBREW LETTER ALEF · (U+05B7) HEBREW POINT PATAH");
+        assert_eq!(app.description_height, height);
+        let _ = app.update(Message::UpdateSelection(0));
+        // Shift replaces the variant list through ShowOverlay, preserving the selected index.
+        let _ = app.update(Message::ShowOverlay(vec!["Ţ".into(), "אַ".into()], 0));
+        assert_eq!(app.selected_description(), "(U+0162) LATIN CAPITAL LETTER T WITH CEDILLA");
+        let id = app.overlay_window.unwrap();
+        // Inspect the generated widget tree without opening or rendering a desktop window.
+        assert_eq!(app.view(id).as_widget().children().len(), 2);
+        app.show_unicode_description = false;
+        let _ = app.update(Message::ShowOverlay(vec!["Ţ".into(), "אַ".into()], 0));
+        assert_eq!(app.description_height, 0.0);
+        assert_eq!(app.view(id).as_widget().children().len(), 1);
+        assert_eq!(app.variants, ["Ţ", "אַ"]);
+        let _ = app.update(Message::HideOverlay);
+        assert!(app.selected_description().is_empty());
+    }
+
+    #[test]
+    fn descriptions_fit_narrow_pages_and_multicodepoint_choices() {
+        let variants: Vec<_> = ["ţ", "אַ", "דזש", "𑪰", "\u{0301}", "°C"]
+            .into_iter().map(String::from).collect();
+        for page_size in [0, 1, 2, 12] {
+            let size = overlay_size_for(&variants, page_size, true);
+            assert!(size.width >= window_width_for(&variants, page_size));
+            assert!(size.height > PICKER_ROW_HEIGHT);
+            for variant in &variants {
+                let bounds = description_bounds(&character_description(variant), size.width - 20.0);
+                assert!(bounds.width <= size.width - 20.0);
+                assert!(bounds.height <= size.height - PICKER_ROW_HEIGHT - DESCRIPTION_SPACING);
+            }
+            assert_eq!(
+                overlay_size_for(&variants, page_size, false),
+                iced::Size::new(window_width_for(&variants, page_size), PICKER_ROW_HEIGHT),
+            );
+        }
+        let single = overlay_size_for(&["ţ".into()], 1, true);
+        let sequence = overlay_size_for(&["t\u{0301}\u{0308}\u{0304}".into()], 1, true);
+        assert!(sequence.height > single.height, "long descriptions must wrap instead of clipping");
+        assert!(sequence.width <= DESCRIPTION_MAX_WIDTH);
+    }
 
     #[test]
     fn symbol_glyphs_stay_inside_the_visible_label() {
@@ -317,6 +457,22 @@ mod tests {
     static ANCHOR_TESTS: Mutex<()> = Mutex::new(());
 
     #[test]
+    fn centered_resize_preserves_the_center_for_growing_shrinking_and_unchanged_sizes() {
+        let origin = iced::Point::new(-1100.0, -535.0);
+        let old_size = iced::Size::new(200.0, 70.0);
+        for (size, expected) in [
+            (iced::Size::new(400.0, 110.0), iced::Point::new(-1200.0, -555.0)),
+            (iced::Size::new(100.0, 50.0), iced::Point::new(-1050.0, -525.0)),
+            (old_size, origin),
+        ] {
+            let moved = resized_centered_origin(origin, old_size, size);
+            assert_eq!(moved, expected);
+            assert_eq!(moved.x + size.width / 2.0, origin.x + old_size.width / 2.0);
+            assert_eq!(moved.y + size.height / 2.0, origin.y + old_size.height / 2.0);
+        }
+    }
+
+    #[test]
     fn overlay_follows_window_in_global_logical_coordinates() {
         let _guard = ANCHOR_TESTS.lock().unwrap_or_else(|e| e.into_inner());
         // Screens left of or above the primary screen have negative origins.
@@ -325,17 +481,18 @@ mod tests {
             ((-1600.0, -900.0, 1200.0, 800.0), (-1100.0, -535.0)),
         ] {
             set_overlay_anchor(Some(anchor));
-            let window::Position::Specific(point) = overlay_position(200.0) else {
+            let window::Position::Specific(point) = overlay_position(iced::Size::new(200.0, 70.0)) else {
                 panic!("expected focused-window position");
             };
             assert_eq!((point.x, point.y), expected);
         }
+        let window::Position::Specific(point) = overlay_position(iced::Size::new(200.0, 110.0)) else {
+            panic!("expected focused-window position");
+        };
+        assert_eq!(point.y, -555.0, "centering must include the description height");
         // An unavailable focused window must clear the previous anchor.
         set_overlay_anchor(None);
-        assert!(matches!(
-            overlay_position(200.0),
-            window::Position::Centered
-        ));
+        assert!(matches!(overlay_position(iced::Size::new(200.0, 70.0)), window::Position::Centered));
     }
 
     #[test]
@@ -344,11 +501,14 @@ mod tests {
         // A 2× XWayland monitor: the window is twice as big in X pixels and
         // still centered on the anchor.
         set_overlay_placement(Some(Anchor { x: 3840.0, y: 0.0, width: 1000.0, height: 800.0, scale: 2.0 }));
-        let window::Position::Specific(point) = overlay_position(200.0) else {
+        let window::Position::Specific(point) = overlay_position(iced::Size::new(200.0, PICKER_ROW_HEIGHT)) else {
             panic!("expected focused-window position");
         };
         assert_eq!((point.x, point.y), (4140.0, 330.0));
-        assert_eq!(overlay_settings(200.0).size, iced::Size::new(400.0, WINDOW_HEIGHT * 2.0));
+        assert_eq!(
+            overlay_settings(iced::Size::new(200.0, PICKER_ROW_HEIGHT)).size,
+            iced::Size::new(400.0, PICKER_ROW_HEIGHT * 2.0)
+        );
         set_overlay_placement(None);
     }
 }
@@ -383,6 +543,8 @@ pub enum Message {
 
 pub struct App {
     items_per_page: usize,
+    show_unicode_description: bool,
+    description_height: f32,
     variants: Vec<String>,
     selected_index: usize,
     overlay_window: Option<window::Id>,
@@ -433,7 +595,7 @@ fn settings_slider<'a>(
 }
 
 impl App {
-    pub fn new(grab_rx: Arc<Mutex<Option<UnboundedReceiver<GrabEvent>>>>, items_per_page: usize) -> (Self, Task<Message>) {
+    pub fn new(grab_rx: Arc<Mutex<Option<UnboundedReceiver<GrabEvent>>>>, items_per_page: usize, show_unicode_description: bool) -> (Self, Task<Message>) {
         GRAB_RX.set(grab_rx).ok();
         // Development aid: QUICKACCENT_DEMO=overlay|settings opens that window
         // at startup without needing the keyboard grab (or its permissions).
@@ -457,6 +619,8 @@ impl App {
         (
             App {
                 items_per_page,
+                show_unicode_description,
+                description_height: 0.0,
                 variants: Vec::new(),
                 selected_index: 0,
                 overlay_window: None,
@@ -530,19 +694,43 @@ impl App {
         match message {
             Message::ShowOverlay(variants, index) => {
                 self.selected_index = index;
-                let width = window_width_for(&variants, self.items_per_page);
+                let old_size = overlay_size_for(&self.variants, self.items_per_page, self.show_unicode_description);
+                let size = overlay_size_for(&variants, self.items_per_page, self.show_unicode_description);
+                self.description_height = if self.show_unicode_description {
+                    size.height - PICKER_ROW_HEIGHT - DESCRIPTION_SPACING
+                } else {
+                    0.0
+                };
                 self.variants = variants;
 
                 if let Some(id) = self.overlay_window {
-                    // Window already open, just resize and update
-                    return window::resize(id, overlay_size(width, self.overlay_scale));
+                    let position = overlay_position(size);
+                    // Resize and move in window-system units (scaled XWayland monitors).
+                    let (old_size, size) = (
+                        overlay_size(old_size, self.overlay_scale),
+                        overlay_size(size, self.overlay_scale),
+                    );
+                    if old_size == size {
+                        return window::resize(id, size);
+                    }
+                    if let window::Position::Specific(point) = position {
+                        return Task::batch([window::resize(id, size), window::move_to(id, point)]);
+                    }
+                    // Centered has no explicit origin: preserve the existing window's center.
+                    // Read its position before resizing so both operations use the old geometry.
+                    return window::get_position(id).then(move |origin| {
+                        let move_task = origin.map(|origin| {
+                            window::move_to(id, resized_centered_origin(origin, old_size, size))
+                        }).unwrap_or_else(Task::none);
+                        Task::batch([window::resize(id, size), move_task])
+                    });
                 }
 
                 #[cfg(target_os = "macos")]
                 set_overlay_anchor(crate::macos::focused_window_rect());
                 self.refresh_from_config();
 
-                let settings = overlay_settings(width);
+                let settings = overlay_settings(size);
                 self.overlay_scale = overlay_anchor().map_or(1.0, |a| a.scale);
                 log::debug!(
                     "opening overlay window at {:?}, scale {}",
@@ -756,6 +944,12 @@ impl App {
         }
     }
 
+    fn selected_description(&self) -> String {
+        self.variants.get(self.selected_index)
+            .map(|variant| character_description(variant))
+            .unwrap_or_default()
+    }
+
     pub fn view(&self, window_id: window::Id) -> Element<'_, Message> {
         if self.settings_window == Some(window_id) {
             return self.settings_view();
@@ -831,12 +1025,24 @@ impl App {
                 .into(),
             );
         }
+        let mut content = column![row(cells).spacing(CELL_SPACING).align_y(iced::Alignment::Center)]
+            .spacing(DESCRIPTION_SPACING)
+            .align_x(iced::Alignment::Center);
+        if self.show_unicode_description {
+            let description = text(self.selected_description())
+                .size(DESCRIPTION_SIZE)
+                .font(iced::Font::DEFAULT)
+                .shaping(text::Shaping::Advanced)
+                .wrapping(text::Wrapping::Word)
+                .align_x(iced::alignment::Horizontal::Center)
+                .align_y(iced::alignment::Vertical::Center)
+                .width(Length::Fill)
+                .height(self.description_height)
+                .color(chip_text);
+            content = content.push(description);
+        }
 
-        container(
-            row(cells)
-                .spacing(CELL_SPACING)
-                .align_y(iced::Alignment::Center),
-        )
+        container(content)
         .padding(10)
         .center_x(Length::Fill)
         .center_y(Length::Fill)

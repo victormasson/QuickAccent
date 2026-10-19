@@ -132,12 +132,13 @@ INSTALL_FROM_SOURCE=1 ./dist/linux/install.sh
 
 `~/.config/quickaccent/config.toml` is created on first run. Languages, timing,
 and activation-key changes reload automatically; appearance is refreshed when
-a window opens. Restart to apply pagination changes:
+a window opens. Restart to apply pagination or character-description changes:
 
 ```toml
 languages = ["French", "German", "Spanish"]
 # hold_delay_ms = 250
 # items_per_page = 0
+# show_unicode_description = true
 # input_time_ms = 200
 # activation_key = "Both"   # Space | LeftRightArrow | Both
 # theme = "system"   # system | light | dark | dracula
@@ -150,11 +151,12 @@ languages = ["French", "German", "Spanish"]
 # chip_radius = 8
 ```
 
-The *Settings…* window edits every key above except `items_per_page` for you (only those lines are
-rewritten; comments and other keys are kept). Open it from the menu-bar menu
-(macOS), the top-bar *QuickAccent* menu (GNOME), or on any Linux desktop by
-launching QuickAccent again while it runs (the launcher entry, its *Settings*
-desktop action, or `quickaccent --settings`), or by right-clicking the picker.
+The *Settings…* window edits every key above except `items_per_page` and
+`show_unicode_description` for you (only those lines are rewritten; comments
+and other keys are kept). Open it from the menu-bar menu (macOS), the top-bar
+*QuickAccent* menu (GNOME), or on any Linux desktop by launching QuickAccent
+again while it runs (the launcher entry, its *Settings* desktop action, or
+`quickaccent --settings`), or by right-clicking the picker.
 
 **Languages:** Catalan, CrimeanTatar, Croatian, Czech, Danish, Dutch, Esperanto, Estonian, Finnish, French, German, Greek, Hungarian, IPA, Iceland, Irish, Italian, Kurdish, Lithuanian, Maltese, Maori, Norwegian, Pinyin, Polish, Portuguese, ProtoIndoEuropean, Romanian, Romanization, ScottishGaelic, Serbian, Slovak, Slovenian, Spanish, Swedish, Turkish, Vietnamese, Welsh
 
@@ -175,6 +177,22 @@ provide complete Unicode 17.0 repertoires through Latin-key lookup. See
 [script bindings and casing](docs/CHARACTERS.md#cherokee-osage-and-canadian-syllabics).
 
 ## Usage
+
+### Character descriptions
+
+Descriptions are on by default. Set `show_unicode_description = false` in
+`~/.config/quickaccent/config.toml` and restart QuickAccent to hide the footer
+and remove its extra space. Set it back to `true` to enable it again.
+
+Below the choices, the picker shows the selected character's Unicode code point
+and official Unicode 17.0 name, for example `(U+0163) LATIN SMALL LETTER T WITH
+CEDILLA`. The description follows selection and Shift/case changes. Choices
+containing multiple characters list each code point and name in order, including
+combining marks; display-only dotted circles are not included.
+
+Long descriptions wrap, with space reserved for every choice so cycling between
+characters or pages does not resize the picker. Names are shown in English as
+published by Unicode.
 
 ### Picker pages
 
