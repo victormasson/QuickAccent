@@ -132,7 +132,7 @@ fn main() -> iced::Result {
         .theme(app::App::theme)
         .style(app::App::style)
         .scale_factor(app::App::scale_factor)
-        .run_with(move || app::App::new(grab_rx_clone.clone()))
+        .run_with(move || app::App::new(grab_rx_clone.clone(), config.items_per_page))
 }
 
 /// Linux startup sequence with load-bearing ordering: make every accent

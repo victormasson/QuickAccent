@@ -130,11 +130,14 @@ INSTALL_FROM_SOURCE=1 ./dist/linux/install.sh
 
 ## Config
 
-`~/.config/quickaccent/config.toml` (created on first run; hot-reloaded):
+`~/.config/quickaccent/config.toml` is created on first run. Languages, timing,
+and activation-key changes reload automatically; appearance is refreshed when
+a window opens. Restart to apply pagination changes:
 
 ```toml
 languages = ["French", "German", "Spanish"]
 # hold_delay_ms = 250
+# items_per_page = 0
 # input_time_ms = 200
 # activation_key = "Both"   # Space | LeftRightArrow | Both
 # theme = "system"   # system | light | dark | dracula
@@ -147,7 +150,7 @@ languages = ["French", "German", "Spanish"]
 # chip_radius = 8
 ```
 
-The *Settings…* window edits every key above for you (only those lines are
+The *Settings…* window edits every key above except `items_per_page` for you (only those lines are
 rewritten; comments and other keys are kept). Open it from the menu-bar menu
 (macOS), the top-bar *QuickAccent* menu (GNOME), or on any Linux desktop by
 launching QuickAccent again while it runs (the launcher entry, its *Settings*
@@ -172,6 +175,20 @@ provide complete Unicode 17.0 repertoires through Latin-key lookup. See
 [script bindings and casing](docs/CHARACTERS.md#cherokee-osage-and-canadian-syllabics).
 
 ## Usage
+
+### Picker pages
+
+`items_per_page = 0` is the default: show all choices without pagination or a
+counter. To enable pages, set a positive integer such as `items_per_page = 12`
+in `~/.config/quickaccent/config.toml`, then restart QuickAccent.
+
+Space or Right Arrow advances, Left Arrow goes back, and the display changes
+pages automatically. The counter shows the selected position and total (e.g.
+`1/113`), not a page number, and only appears when multiple pages exist.
+Cycling wraps at either end; releasing the original key inserts the selected
+character, and Escape cancels as usual. The widest page determines window
+width, so cycling does not resize it. Showing all choices (`items_per_page = 0`)
+can make long pickers wider than the screen.
 
 ```bash
 quickaccent
