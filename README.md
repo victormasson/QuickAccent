@@ -207,11 +207,20 @@ character, and Escape cancels as usual. The widest page determines window
 width, so cycling does not resize it. Showing all choices (`items_per_page = 0`)
 can make long pickers wider than the screen.
 
+### Grid view
+
+Press Down Arrow in the picker to see every choice for the letter at once, in a
+grid with `items_per_page` columns (a roughly square grid when it is `0`).
+Space moves cell by cell from the top left to the bottom right, the arrow keys
+move left, right, up and down, and every direction wraps. Release the letter to
+insert the selected character, or press Escape to cancel. The next picker opens
+as a row again.
+
 ```bash
 quickaccent
 RUST_LOG=debug quickaccent
 journalctl --user -u quickaccent -f
-QUICKACCENT_DEMO=overlay quickaccent   # or =settings: open that window at
+QUICKACCENT_DEMO=overlay quickaccent   # or =grid / =settings: open that window at
                                         # startup, no keyboard grab (UI work)
 ```
 

@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use crate::config::ActivationKey;
@@ -6,12 +7,42 @@ use crate::mappings::MappingKey;
 /// After selecting an accent, ignore accent triggers for this long
 const COOLDOWN_DURATION: Duration = Duration::from_millis(500);
 
+/// `items_per_page` from config, set by the app; the grid's column count.
+pub static ITEMS_PER_PAGE: AtomicUsize = AtomicUsize::new(0);
+
+/// Columns of the Down-arrow grid: `items_per_page`, or a square-ish grid
+/// when that is 0 (show all).
+pub fn grid_columns(len: usize, items_per_page: usize) -> usize {
+    let cols = if items_per_page == 0 {
+        (len as f64).sqrt().ceil() as usize
+    } else {
+        items_per_page
+    };
+    cols.clamp(1, len.max(1))
+}
+
+/// Next selection for a navigation key, wrapping at every edge. `cols` is
+/// Some in grid mode, where Up/Down move a whole row.
+fn navigate(input: KeyInput, idx: usize, len: usize, cols: Option<usize>) -> Option<usize> {
+    Some(match (input, cols) {
+        (KeyInput::Space | KeyInput::RightArrow, _) => (idx + 1) % len,
+        (KeyInput::LeftArrow, _) => (idx + len - 1) % len,
+        // Past the last row: back to the top of the same column.
+        (KeyInput::DownArrow, Some(c)) => if idx + c < len { idx + c } else { idx % c },
+        // Above the first row: the bottom-most cell of the same column.
+        (KeyInput::UpArrow, Some(c)) => if idx >= c { idx - c } else { idx + (len - 1 - idx) / c * c },
+        _ => return None,
+    })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeyInput {
     Letter(MappingKey),
     Space,
     LeftArrow,
     RightArrow,
+    UpArrow,
+    DownArrow,
     Escape,
     Other,
 }
@@ -117,6 +148,8 @@ pub enum AccentState {
 pub enum GrabEvent {
     ShowOverlay { variants: Vec<String>, index: usize },
     UpdateSelection(usize),
+    /// Down arrow: lay the open picker out as a grid.
+    ShowGrid,
     HideOverlay,
     InjectChar(String),
     /// False start: letter released too quickly, replay the suppressed trigger key
@@ -132,6 +165,8 @@ pub struct StateMachine {
     pub input_time: Duration,
     pub hold_delay: Duration,
     pub activation_key: ActivationKey,
+    /// Down arrow switched the open picker to the grid.
+    pub grid: bool,
 }
 
 impl StateMachine {
@@ -141,7 +176,26 @@ impl StateMachine {
             input_time: Duration::from_millis(input_time_ms),
             hold_delay: Duration::from_millis(hold_delay_ms),
             activation_key,
+            grid: false,
         }
+    }
+
+    /// Selection keys while Selecting: move, or (Down in the row) open the grid.
+    fn select_key(&mut self, input: KeyInput) -> Option<GrabEvent> {
+        let AccentState::Selecting { variants, selected_index, .. } = &mut self.state else {
+            return None;
+        };
+        if input == KeyInput::DownArrow && !self.grid {
+            self.grid = true;
+            return Some(GrabEvent::ShowGrid);
+        }
+        let len = variants.len();
+        let cols = self
+            .grid
+            .then(|| grid_columns(len, ITEMS_PER_PAGE.load(Ordering::Relaxed)));
+        let new_index = navigate(input, *selected_index, len, cols)?;
+        *selected_index = new_index;
+        Some(GrabEvent::UpdateSelection(new_index))
     }
 
     pub fn set_timing(
@@ -224,6 +278,7 @@ impl StateMachine {
                         let held_key = *key;
                         let held_code = *code;
                         let held_since = *held_since;
+                        self.grid = false;
                         self.state = AccentState::Selecting {
                             key: held_key,
                             code: held_code,
@@ -249,38 +304,12 @@ impl StateMachine {
                     (false, None)
                 }
             }
-            AccentState::Selecting {
-                variants,
-                selected_index,
-                ..
-            } => match input {
-                KeyInput::Space | KeyInput::RightArrow => {
-                    let len = variants.len();
-                    let new_index = (*selected_index + 1) % len;
-                    if let AccentState::Selecting {
-                        selected_index, ..
-                    } = &mut self.state
-                    {
-                        *selected_index = new_index;
-                    }
-                    (true, Some(GrabEvent::UpdateSelection(new_index)))
-                }
-                KeyInput::LeftArrow => {
-                    let len = variants.len();
-                    let new_index = (*selected_index + len - 1) % len;
-                    if let AccentState::Selecting {
-                        selected_index, ..
-                    } = &mut self.state
-                    {
-                        *selected_index = new_index;
-                    }
-                    (true, Some(GrabEvent::UpdateSelection(new_index)))
-                }
+            AccentState::Selecting { .. } => match input {
                 KeyInput::Escape => {
                     self.state = AccentState::Idle;
                     (true, Some(GrabEvent::HideOverlay))
                 }
-                _ => (true, None),
+                _ => (true, self.select_key(input)),
             },
         }
     }
@@ -367,6 +396,7 @@ impl StateMachine {
                         // Shift before the letter when typing capitals.
                         let uppercase = shift_at_press || shift_held;
                         let variants = crate::mappings::get_variants(key, uppercase);
+                        self.grid = false;
                         self.state = AccentState::Selecting {
                             key,
                             code: held,
@@ -415,31 +445,18 @@ impl StateMachine {
                 }
                 action
             }
-            AccentState::Selecting {
-                code: held,
-                variants,
-                selected_index,
-                ..
-            } => {
+            AccentState::Selecting { code: held, .. } => {
                 let held = *held;
-                let len = variants.len();
-                let idx = *selected_index;
                 match input {
-                    KeyInput::Space | KeyInput::RightArrow | KeyInput::LeftArrow => {
-                        let new_index = if input == KeyInput::LeftArrow {
-                            (idx + len - 1) % len
-                        } else {
-                            (idx + 1) % len
-                        };
-                        if let AccentState::Selecting { selected_index, .. } = &mut self.state {
-                            *selected_index = new_index;
-                        }
-                        Action {
-                            suppress: true,
-                            ui: Some(GrabEvent::UpdateSelection(new_index)),
-                            ..Action::default()
-                        }
-                    }
+                    KeyInput::Space
+                    | KeyInput::RightArrow
+                    | KeyInput::LeftArrow
+                    | KeyInput::UpArrow
+                    | KeyInput::DownArrow => Action {
+                        suppress: true,
+                        ui: self.select_key(input),
+                        ..Action::default()
+                    },
                     KeyInput::Escape => {
                         // Cancel: the user still typed the letter — replay it
                         // plain (it's the only way to get the base letter).
@@ -947,6 +964,45 @@ mod tests {
         assert!(a.pending.is_empty());
         assert!(a.ui.is_none());
         assert!(sm.is_letter_held());
+    }
+
+    #[test]
+    fn grid_navigation_moves_by_rows_and_wraps() {
+        // 7 cells, 3 columns:  0 1 2 / 3 4 5 / 6
+        let nav = |input, idx| navigate(input, idx, 7, Some(3)).unwrap();
+        assert_eq!(nav(KeyInput::Space, 6), 0);
+        assert_eq!(nav(KeyInput::RightArrow, 2), 3);
+        assert_eq!(nav(KeyInput::LeftArrow, 0), 6);
+        assert_eq!(nav(KeyInput::DownArrow, 1), 4);
+        assert_eq!(nav(KeyInput::DownArrow, 4), 1); // no cell below → top of column
+        assert_eq!(nav(KeyInput::DownArrow, 6), 0);
+        assert_eq!(nav(KeyInput::UpArrow, 4), 1);
+        assert_eq!(nav(KeyInput::UpArrow, 0), 6); // bottom-most cell of column 0
+        assert_eq!(nav(KeyInput::UpArrow, 2), 5);
+        // Up/Down do nothing in the single row.
+        assert_eq!(navigate(KeyInput::UpArrow, 1, 7, None), None);
+        assert_eq!(grid_columns(10, 0), 4);
+        assert_eq!(grid_columns(3, 12), 3);
+        assert_eq!(grid_columns(0, 0), 1);
+    }
+
+    #[test]
+    fn down_arrow_opens_the_grid_then_steps_rows() {
+        let _guard = setup();
+        ITEMS_PER_PAGE.store(2, Ordering::Relaxed);
+        let mut sm = sm(ActivationKey::Both);
+        let variants = deferred_open_overlay(&mut sm);
+        assert!(variants.len() > 2);
+        let a = sm.deferred_press(KeyInput::DownArrow, Some(108), false, false);
+        assert!(a.suppress);
+        assert_eq!(a.ui, Some(GrabEvent::ShowGrid));
+        let a = sm.deferred_press(KeyInput::DownArrow, Some(108), false, false);
+        assert_eq!(a.ui, Some(GrabEvent::UpdateSelection(2)));
+        // A new picker starts as a row again.
+        sm.deferred_press(KeyInput::Escape, Some(1), false, false);
+        deferred_open_overlay(&mut sm);
+        assert!(!sm.grid);
+        ITEMS_PER_PAGE.store(0, Ordering::Relaxed);
     }
 
     fn deferred_open_overlay(sm: &mut StateMachine) -> Vec<String> {

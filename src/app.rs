@@ -50,6 +50,8 @@ const CELL_SPACING: f32 = 4.0;
 const PADDING: f32 = 28.0;
 const PICKER_ROW_HEIGHT: f32 = 70.0;
 const PAGE_COUNTER_WIDTH: f32 = 80.0;
+/// Height of one more chip row in the grid (chip + spacing).
+const GRID_ROW_STEP: f32 = 56.0;
 const DESCRIPTION_SIZE: f32 = 12.0;
 const DESCRIPTION_SPACING: f32 = 6.0;
 const DESCRIPTION_MAX_WIDTH: f32 = 640.0;
@@ -78,21 +80,39 @@ fn description_bounds(description: &str, width: f32) -> iced::Size {
     }).min_bounds()
 }
 
-fn overlay_size_for(variants: &[String], items_per_page: usize, show_unicode_description: bool) -> iced::Size {
+/// Logical overlay size and the description height inside it.
+fn overlay_size_for(
+    variants: &[String],
+    items_per_page: usize,
+    show_unicode_description: bool,
+    grid: bool,
+) -> (iced::Size, f32) {
+    let (picker_width, picker_height) = if grid {
+        let cols = crate::state_machine::grid_columns(variants.len(), items_per_page);
+        let rows = variants.len().div_ceil(cols).max(1);
+        (
+            PADDING + cols as f32 * (grid_cell_width(variants) + CELL_SPACING),
+            PICKER_ROW_HEIGHT + (rows - 1) as f32 * GRID_ROW_STEP,
+        )
+    } else {
+        (window_width_for(variants, items_per_page), PICKER_ROW_HEIGHT)
+    };
     if !show_unicode_description {
-        return iced::Size::new(window_width_for(variants, items_per_page), PICKER_ROW_HEIGHT);
+        return (iced::Size::new(picker_width, picker_height), 0.0);
     }
     let descriptions: Vec<_> = variants.iter().map(|v| character_description(v)).collect();
     let longest = descriptions.iter()
         .map(|d| description_bounds(d, f32::INFINITY).width.ceil() + PADDING)
         .fold(PADDING, f32::max);
-    let width = window_width_for(variants, items_per_page)
-        .max(longest.min(DESCRIPTION_MAX_WIDTH));
+    let width = picker_width.max(longest.min(DESCRIPTION_MAX_WIDTH));
     // Reserve the tallest wrapped description across every page, not just the selection.
     let description_height = descriptions.iter()
         .map(|d| description_bounds(d, width - 20.0).height.ceil())
         .fold(0.0, f32::max);
-    iced::Size::new(width, PICKER_ROW_HEIGHT + DESCRIPTION_SPACING + description_height)
+    (
+        iced::Size::new(width, picker_height + DESCRIPTION_SPACING + description_height),
+        description_height,
+    )
 }
 
 fn window_width_for(variants: &[String], items_per_page: usize) -> f32 {
@@ -121,30 +141,37 @@ fn page_range(count: usize, selected_index: usize, items_per_page: usize) -> std
 }
 
 fn row_width_for(variants: &[String]) -> f32 {
+    PADDING
+        + variants
+            .iter()
+            .map(|variant| cell_width(variant) + CELL_SPACING)
+            .sum::<f32>()
+}
+
+/// One width for every grid cell, so columns line up.
+fn grid_cell_width(variants: &[String]) -> f32 {
+    variants.iter().map(|v| cell_width(v)).fold(0.0, f32::max)
+}
+
+fn cell_width(variant: &str) -> f32 {
     use iced::advanced::{
         graphics::text::Paragraph,
         text::{Paragraph as _, Text},
     };
 
-    PADDING
-        + variants
-            .iter()
-            .map(|variant| {
-                let content = variant_label(variant);
-                let paragraph = Paragraph::with_text(Text {
-                    content: &content,
-                    bounds: iced::Size::INFINITY,
-                    size: TEXT_SIZE.into(),
-                    line_height: Default::default(),
-                    font: iced::Font::DEFAULT,
-                    horizontal_alignment: iced::alignment::Horizontal::Left,
-                    vertical_alignment: iced::alignment::Vertical::Top,
-                    shaping: text::Shaping::Advanced,
-                    wrapping: text::Wrapping::None,
-                });
-                paragraph.min_bounds().width.ceil() + 2.0 * CELL_PADDING + CELL_SPACING
-            })
-            .sum::<f32>()
+    let content = variant_label(variant);
+    let paragraph = Paragraph::with_text(Text {
+        content: &content,
+        bounds: iced::Size::INFINITY,
+        size: TEXT_SIZE.into(),
+        line_height: Default::default(),
+        font: iced::Font::DEFAULT,
+        horizontal_alignment: iced::alignment::Horizontal::Left,
+        vertical_alignment: iced::alignment::Vertical::Top,
+        shaping: text::Shaping::Advanced,
+        wrapping: text::Wrapping::None,
+    });
+    paragraph.min_bounds().width.ceil() + 2.0 * CELL_PADDING
 }
 
 fn variant_label(ch: &str) -> String {
@@ -274,6 +301,7 @@ mod tests {
         let cfg = crate::config::Config::default();
         let mut app = App {
             items_per_page: 1,
+            grid: false,
             show_unicode_description: true,
             description_height: 0.0,
             variants: Vec::new(),
@@ -316,11 +344,25 @@ mod tests {
     }
 
     #[test]
+    fn grid_is_columns_wide_and_rows_tall() {
+        let variants: Vec<String> = ["é", "è", "ê", "ë", "ē", "ė", "ę"].map(String::from).into();
+        let (row, _) = overlay_size_for(&variants, 3, false, false);
+        let (grid, _) = overlay_size_for(&variants, 3, false, true);
+        assert_eq!(grid.height, PICKER_ROW_HEIGHT + 2.0 * GRID_ROW_STEP);
+        assert_eq!(grid.width, PADDING + 3.0 * (grid_cell_width(&variants) + CELL_SPACING));
+        assert!(grid.width >= row_width_for(&variants[..3]));
+        assert_eq!(row.height, PICKER_ROW_HEIGHT);
+        // The description sits below every row.
+        let (with_desc, desc) = overlay_size_for(&variants, 3, true, true);
+        assert_eq!(with_desc.height, grid.height + DESCRIPTION_SPACING + desc);
+    }
+
+    #[test]
     fn descriptions_fit_narrow_pages_and_multicodepoint_choices() {
         let variants: Vec<_> = ["ţ", "אַ", "דזש", "𑪰", "\u{0301}", "°C"]
             .into_iter().map(String::from).collect();
         for page_size in [0, 1, 2, 12] {
-            let size = overlay_size_for(&variants, page_size, true);
+            let size = overlay_size_for(&variants, page_size, true, false).0;
             assert!(size.width >= window_width_for(&variants, page_size));
             assert!(size.height > PICKER_ROW_HEIGHT);
             for variant in &variants {
@@ -329,12 +371,12 @@ mod tests {
                 assert!(bounds.height <= size.height - PICKER_ROW_HEIGHT - DESCRIPTION_SPACING);
             }
             assert_eq!(
-                overlay_size_for(&variants, page_size, false),
+                overlay_size_for(&variants, page_size, false, false).0,
                 iced::Size::new(window_width_for(&variants, page_size), PICKER_ROW_HEIGHT),
             );
         }
-        let single = overlay_size_for(&["ţ".into()], 1, true);
-        let sequence = overlay_size_for(&["t\u{0301}\u{0308}\u{0304}".into()], 1, true);
+        let single = overlay_size_for(&["ţ".into()], 1, true, false).0;
+        let sequence = overlay_size_for(&["t\u{0301}\u{0308}\u{0304}".into()], 1, true, false).0;
         assert!(sequence.height > single.height, "long descriptions must wrap instead of clipping");
         assert!(sequence.width <= DESCRIPTION_MAX_WIDTH);
     }
@@ -517,6 +559,7 @@ mod tests {
 pub enum Message {
     ShowOverlay(Vec<String>, usize),
     UpdateSelection(usize),
+    ShowGrid,
     HideOverlay,
     InjectChar,
     WindowOpened(window::Id),
@@ -545,6 +588,8 @@ pub enum Message {
 
 pub struct App {
     items_per_page: usize,
+    /// The open picker is laid out as a grid (Down arrow).
+    grid: bool,
     show_unicode_description: bool,
     description_height: f32,
     variants: Vec<String>,
@@ -599,7 +644,7 @@ fn settings_slider<'a>(
 impl App {
     pub fn new(grab_rx: Arc<Mutex<Option<UnboundedReceiver<GrabEvent>>>>, items_per_page: usize, show_unicode_description: bool) -> (Self, Task<Message>) {
         GRAB_RX.set(grab_rx).ok();
-        // Development aid: QUICKACCENT_DEMO=overlay|settings opens that window
+        // Development aid: QUICKACCENT_DEMO=overlay|grid|settings opens that window
         // at startup without needing the keyboard grab (or its permissions).
         let demo = std::env::var("QUICKACCENT_DEMO");
         if let Ok(which) = &demo {
@@ -610,6 +655,11 @@ impl App {
                 ["é", "è", "ê", "ë", "ē", "ė"].map(String::from).to_vec(),
                 1,
             )),
+            Ok("grid") => Task::done(Message::ShowOverlay(
+                ["é", "è", "ê", "ë", "ē", "ė", "ę", "ě", "ɛ", "ə"].map(String::from).to_vec(),
+                4,
+            ))
+            .chain(Task::done(Message::ShowGrid)),
             Ok("settings") => Task::done(Message::OpenSettings),
             _ => Task::none(),
         };
@@ -621,6 +671,7 @@ impl App {
         (
             App {
                 items_per_page,
+                grid: false,
                 show_unicode_description,
                 description_height: 0.0,
                 variants: Vec::new(),
@@ -689,7 +740,7 @@ impl App {
         self.overlay_opacity = cfg.overlay_opacity as f32;
         self.overlay_radius = cfg.overlay_radius as f32;
         self.chip_radius = cfg.chip_radius as f32;
-        self.items_per_page = cfg.items_per_page;
+        self.set_items_per_page(cfg.items_per_page);
         self.show_unicode_description = cfg.show_unicode_description;
         self.languages = cfg.languages;
     }
@@ -702,37 +753,15 @@ impl App {
                     #[cfg(target_os = "macos")]
                     set_overlay_anchor(crate::macos::focused_window_rect());
                     self.refresh_from_config();
+                    self.grid = false;
                 }
-                let old_size = overlay_size_for(&self.variants, self.items_per_page, self.show_unicode_description);
-                let size = overlay_size_for(&variants, self.items_per_page, self.show_unicode_description);
-                self.description_height = if self.show_unicode_description {
-                    size.height - PICKER_ROW_HEIGHT - DESCRIPTION_SPACING
-                } else {
-                    0.0
-                };
+                let (old_size, _) = self.overlay_layout();
                 self.variants = variants;
+                let (size, description_height) = self.overlay_layout();
+                self.description_height = description_height;
 
                 if let Some(id) = self.overlay_window {
-                    let position = overlay_position(size);
-                    // Resize and move in window-system units (scaled XWayland monitors).
-                    let (old_size, size) = (
-                        overlay_size(old_size, self.overlay_scale),
-                        overlay_size(size, self.overlay_scale),
-                    );
-                    if old_size == size {
-                        return window::resize(id, size);
-                    }
-                    if let window::Position::Specific(point) = position {
-                        return Task::batch([window::resize(id, size), window::move_to(id, point)]);
-                    }
-                    // Centered has no explicit origin: preserve the existing window's center.
-                    // Read its position before resizing so both operations use the old geometry.
-                    return window::get_position(id).then(move |origin| {
-                        let move_task = origin.map(|origin| {
-                            window::move_to(id, resized_centered_origin(origin, old_size, size))
-                        }).unwrap_or_else(Task::none);
-                        Task::batch([window::resize(id, size), move_task])
-                    });
+                    return self.resize_overlay(id, old_size, size);
                 }
 
                 let settings = overlay_settings(size);
@@ -753,8 +782,19 @@ impl App {
             }
             // On InjectChar the injection already happened (Linux: grab
             // thread via uinput; macOS: grab dispatch) — just close.
+            Message::ShowGrid => {
+                let (old_size, _) = self.overlay_layout();
+                self.grid = true;
+                let (size, description_height) = self.overlay_layout();
+                self.description_height = description_height;
+                match self.overlay_window {
+                    Some(id) => self.resize_overlay(id, old_size, size),
+                    None => Task::none(),
+                }
+            }
             Message::HideOverlay | Message::InjectChar => {
                 self.variants.clear();
+                self.grid = false;
                 if let Some(id) = self.overlay_window.take() {
                     return window::close(id);
                 }
@@ -946,7 +986,7 @@ impl App {
                 Task::none()
             }
             Message::SetItemsPerPage(v) => {
-                self.items_per_page = v.round().clamp(0.0, 30.0) as usize;
+                self.set_items_per_page(v.round().clamp(0.0, 30.0) as usize);
                 if let Err(e) = crate::config::set_u64("items_per_page", self.items_per_page as u64) {
                     eprintln!("[QuickAccent] Failed to save items_per_page: {e}");
                 }
@@ -961,6 +1001,41 @@ impl App {
             }
             Message::Noop => Task::none(),
         }
+    }
+
+    /// Also tells the grab thread, which steps through the grid's rows.
+    fn set_items_per_page(&mut self, items_per_page: usize) {
+        self.items_per_page = items_per_page;
+        crate::state_machine::ITEMS_PER_PAGE
+            .store(items_per_page, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    fn overlay_layout(&self) -> (iced::Size, f32) {
+        overlay_size_for(&self.variants, self.items_per_page, self.show_unicode_description, self.grid)
+    }
+
+    /// Resize the open overlay from `old_size`, keeping it centered.
+    fn resize_overlay(&self, id: window::Id, old_size: iced::Size, size: iced::Size) -> Task<Message> {
+        let position = overlay_position(size);
+        // Resize and move in window-system units (scaled XWayland monitors).
+        let (old_size, size) = (
+            overlay_size(old_size, self.overlay_scale),
+            overlay_size(size, self.overlay_scale),
+        );
+        if old_size == size {
+            return window::resize(id, size);
+        }
+        if let window::Position::Specific(point) = position {
+            return Task::batch([window::resize(id, size), window::move_to(id, point)]);
+        }
+        // Centered has no explicit origin: preserve the existing window's center.
+        // Read its position before resizing so both operations use the old geometry.
+        window::get_position(id).then(move |origin| {
+            let move_task = origin.map(|origin| {
+                window::move_to(id, resized_centered_origin(origin, old_size, size))
+            }).unwrap_or_else(Task::none);
+            Task::batch([window::resize(id, size), move_task])
+        })
     }
 
     fn selected_description(&self) -> String {
@@ -990,61 +1065,55 @@ impl App {
         let chip_radius = self.chip_radius;
         let overlay_radius = self.overlay_radius;
 
-        let page = page_range(self.variants.len(), self.selected_index, self.items_per_page);
-        let mut cells: Vec<Element<Message>> = self
-            .variants
-            .iter()
-            .enumerate()
-            .skip(page.start)
-            .take(page.len())
-            .map(|(i, ch)| {
-                let is_selected = i == self.selected_index;
-                let label = text(variant_label(ch))
-                    .size(TEXT_SIZE)
-                    .font(iced::Font::DEFAULT)
-                    .shaping(text::Shaping::Advanced)
-                    .wrapping(text::Wrapping::None);
+        // Grid cells share one width so the columns line up.
+        let grid_cell = self.grid.then(|| grid_cell_width(&self.variants));
+        let cell = |i: usize, ch: &String| -> Element<Message> {
+            let is_selected = i == self.selected_index;
+            let label = text(variant_label(ch))
+                .size(TEXT_SIZE)
+                .font(iced::Font::DEFAULT)
+                .shaping(text::Shaping::Advanced)
+                .wrapping(text::Wrapping::None);
 
-                    let cell = container(label).padding([8.0, CELL_PADDING]).style(
-                        move |_theme: &Theme| container::Style {
-                            background: Some(iced::Background::Color(if is_selected {
-                                selected
-                            } else {
-                                chip
-                            })),
-                            border: iced::Border {
-                                radius: chip_radius.into(),
-                                ..Default::default()
-                            },
-                            text_color: Some(if is_selected {
-                                selected_text
-                            } else {
-                                chip_text
-                            }),
-                            ..Default::default()
-                        },
-                    );
-
-                    cell.into()
-                })
-                .collect();
-
-        if self.items_per_page > 0 && self.variants.len() > self.items_per_page {
-            cells.push(
-                container(
-                    text(format!(
-                        "{}/{}",
-                        self.selected_index + 1,
-                        self.variants.len()
-                    ))
-                    .size(14)
-                    .color(chip_text),
-                )
-                .center_x(PAGE_COUNTER_WIDTH)
-                .into(),
+            let cell = container(label).padding([8.0, CELL_PADDING]).style(
+                move |_theme: &Theme| container::Style {
+                    background: Some(iced::Background::Color(if is_selected {
+                        selected
+                    } else {
+                        chip
+                    })),
+                    border: iced::Border {
+                        radius: chip_radius.into(),
+                        ..Default::default()
+                    },
+                    text_color: Some(if is_selected {
+                        selected_text
+                    } else {
+                        chip_text
+                    }),
+                    ..Default::default()
+                },
             );
-        }
-        let mut content = column![row(cells).spacing(CELL_SPACING).align_y(iced::Alignment::Center)]
+
+            match grid_cell {
+                Some(width) => cell.center_x(width).into(),
+                None => cell.into(),
+            }
+        };
+
+        let picker: Element<Message> = if self.grid {
+            let cols = crate::state_machine::grid_columns(self.variants.len(), self.items_per_page);
+            column(self.variants.chunks(cols).enumerate().map(|(r, chunk)| {
+                row(chunk.iter().enumerate().map(|(c, ch)| cell(r * cols + c, ch)))
+                    .spacing(CELL_SPACING)
+                    .into()
+            }))
+            .spacing(CELL_SPACING)
+            .into()
+        } else {
+            self.row_picker(&cell, chip_text)
+        };
+        let mut content = column![picker]
             .spacing(DESCRIPTION_SPACING)
             .align_x(iced::Alignment::Center);
         if self.show_unicode_description {
@@ -1074,6 +1143,39 @@ impl App {
             ..Default::default()
         })
         .into()
+    }
+
+    /// The single-row picker: the current page, then the position counter.
+    fn row_picker<'a>(
+        &'a self,
+        cell: &impl Fn(usize, &'a String) -> Element<'a, Message>,
+        chip_text: Color,
+    ) -> Element<'a, Message> {
+        let page = page_range(self.variants.len(), self.selected_index, self.items_per_page);
+        let mut cells: Vec<Element<Message>> = self
+            .variants
+            .iter()
+            .enumerate()
+            .skip(page.start)
+            .take(page.len())
+            .map(|(i, ch)| cell(i, ch))
+            .collect();
+        if self.items_per_page > 0 && self.variants.len() > self.items_per_page {
+            cells.push(
+                container(
+                    text(format!(
+                        "{}/{}",
+                        self.selected_index + 1,
+                        self.variants.len()
+                    ))
+                    .size(14)
+                    .color(chip_text),
+                )
+                .center_x(PAGE_COUNTER_WIDTH)
+                .into(),
+            );
+        }
+        row(cells).spacing(CELL_SPACING).align_y(iced::Alignment::Center).into()
     }
 
     fn settings_view(&self) -> Element<'_, Message> {
@@ -1307,6 +1409,7 @@ fn grab_subscription() -> impl iced::futures::Stream<Item = Message> {
             let msg = match event {
                 GrabEvent::ShowOverlay { variants, index } => Message::ShowOverlay(variants, index),
                 GrabEvent::UpdateSelection(index) => Message::UpdateSelection(index),
+                GrabEvent::ShowGrid => Message::ShowGrid,
                 GrabEvent::HideOverlay => Message::HideOverlay,
                 GrabEvent::InjectChar(_) => Message::InjectChar,
                 GrabEvent::FalseStart => Message::HideOverlay,

@@ -129,6 +129,8 @@ mod platform {
             53 => KeyInput::Escape,
             123 => KeyInput::LeftArrow,
             124 => KeyInput::RightArrow,
+            125 => KeyInput::DownArrow,
+            126 => KeyInput::UpArrow,
             _ => KeyInput::Other,
         }
     }
@@ -491,6 +493,8 @@ mod platform {
             Key::Escape => KeyInput::Escape,
             Key::LeftArrow => KeyInput::LeftArrow,
             Key::RightArrow => KeyInput::RightArrow,
+            Key::UpArrow => KeyInput::UpArrow,
+            Key::DownArrow => KeyInput::DownArrow,
             other => {
                 if let Some(mk) = event.name.as_deref().and_then(xkb_map::letter_from_name) {
                     return KeyInput::Letter(mk);

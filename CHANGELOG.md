@@ -5,6 +5,14 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Grid view.** Down Arrow in the picker shows every choice for the letter
+  in a grid with `items_per_page` columns; Space walks it cell by cell and
+  the arrow keys move in all four directions.
+- **Settings:** *Items per page* and *Show Unicode name below the picker*,
+  applied to the next picker without a restart.
+
 ### Fixed
 
 - **Some accents never appeared in Chromium apps (Brave, VS Code, Teams…).**
