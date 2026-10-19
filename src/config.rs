@@ -397,6 +397,10 @@ pub fn set_u64(key: &str, value: u64) -> std::io::Result<()> {
     set_value(key, &value.to_string())
 }
 
+pub fn set_bool(key: &str, value: bool) -> std::io::Result<()> {
+    set_value(key, &value.to_string())
+}
+
 pub fn set_f64(key: &str, value: f64) -> std::io::Result<()> {
     set_value(key, &format!("{value:.2}"))
 }

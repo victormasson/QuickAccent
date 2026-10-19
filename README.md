@@ -131,8 +131,8 @@ INSTALL_FROM_SOURCE=1 ./dist/linux/install.sh
 ## Config
 
 `~/.config/quickaccent/config.toml` is created on first run. Languages, timing,
-and activation-key changes reload automatically; appearance is refreshed when
-a window opens. Restart to apply pagination or character-description changes:
+and activation-key changes reload automatically; appearance, pagination and
+character descriptions are refreshed when a window opens:
 
 ```toml
 languages = ["French", "German", "Spanish"]
@@ -151,9 +151,8 @@ languages = ["French", "German", "Spanish"]
 # chip_radius = 8
 ```
 
-The *Settings…* window edits every key above except `items_per_page` and
-`show_unicode_description` for you (only those lines are rewritten; comments
-and other keys are kept). Open it from the menu-bar menu (macOS), the top-bar
+The *Settings…* window edits every key above for you (only those lines are
+rewritten; comments and other keys are kept). Open it from the menu-bar menu (macOS), the top-bar
 *QuickAccent* menu (GNOME), or on any Linux desktop by launching QuickAccent
 again while it runs (the launcher entry, its *Settings* desktop action, or
 `quickaccent --settings`), or by right-clicking the picker.
@@ -180,9 +179,9 @@ provide complete Unicode 17.0 repertoires through Latin-key lookup. See
 
 ### Character descriptions
 
-Descriptions are on by default. Set `show_unicode_description = false` in
-`~/.config/quickaccent/config.toml` and restart QuickAccent to hide the footer
-and remove its extra space. Set it back to `true` to enable it again.
+Descriptions are on by default. Untick *Show Unicode name below the picker* in
+Settings (or set `show_unicode_description = false`) to hide the footer and
+remove its extra space. Set it back to `true` to enable it again.
 
 Below the choices, the picker shows the selected character's Unicode code point
 and official Unicode 17.0 name, for example `(U+0163) LATIN SMALL LETTER T WITH
@@ -197,8 +196,8 @@ published by Unicode.
 ### Picker pages
 
 `items_per_page = 0` is the default: show all choices without pagination or a
-counter. To enable pages, set a positive integer such as `items_per_page = 12`
-in `~/.config/quickaccent/config.toml`, then restart QuickAccent.
+counter. To enable pages, move *Items per page* in Settings, or set a positive
+integer such as `items_per_page = 12` in `~/.config/quickaccent/config.toml`.
 
 Space or Right Arrow advances, Left Arrow goes back, and the display changes
 pages automatically. The counter shows the selected position and total (e.g.

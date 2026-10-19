@@ -537,6 +537,8 @@ pub enum Message {
     SetOverlayOpacity(f32),
     SetOverlayRadius(f32),
     SetChipRadius(f32),
+    SetItemsPerPage(f32),
+    SetShowUnicodeDescription(bool),
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     Noop,
 }
@@ -687,6 +689,8 @@ impl App {
         self.overlay_opacity = cfg.overlay_opacity as f32;
         self.overlay_radius = cfg.overlay_radius as f32;
         self.chip_radius = cfg.chip_radius as f32;
+        self.items_per_page = cfg.items_per_page;
+        self.show_unicode_description = cfg.show_unicode_description;
         self.languages = cfg.languages;
     }
 
@@ -694,6 +698,11 @@ impl App {
         match message {
             Message::ShowOverlay(variants, index) => {
                 self.selected_index = index;
+                if self.overlay_window.is_none() {
+                    #[cfg(target_os = "macos")]
+                    set_overlay_anchor(crate::macos::focused_window_rect());
+                    self.refresh_from_config();
+                }
                 let old_size = overlay_size_for(&self.variants, self.items_per_page, self.show_unicode_description);
                 let size = overlay_size_for(&variants, self.items_per_page, self.show_unicode_description);
                 self.description_height = if self.show_unicode_description {
@@ -725,10 +734,6 @@ impl App {
                         Task::batch([window::resize(id, size), move_task])
                     });
                 }
-
-                #[cfg(target_os = "macos")]
-                set_overlay_anchor(crate::macos::focused_window_rect());
-                self.refresh_from_config();
 
                 let settings = overlay_settings(size);
                 self.overlay_scale = overlay_anchor().map_or(1.0, |a| a.scale);
@@ -937,6 +942,20 @@ impl App {
                 self.chip_radius = v.clamp(0.0, 16.0);
                 if let Err(e) = crate::config::set_f64("chip_radius", self.chip_radius as f64) {
                     eprintln!("[QuickAccent] Failed to save chip_radius: {e}");
+                }
+                Task::none()
+            }
+            Message::SetItemsPerPage(v) => {
+                self.items_per_page = v.round().clamp(0.0, 30.0) as usize;
+                if let Err(e) = crate::config::set_u64("items_per_page", self.items_per_page as u64) {
+                    eprintln!("[QuickAccent] Failed to save items_per_page: {e}");
+                }
+                Task::none()
+            }
+            Message::SetShowUnicodeDescription(on) => {
+                self.show_unicode_description = on;
+                if let Err(e) = crate::config::set_bool("show_unicode_description", on) {
+                    eprintln!("[QuickAccent] Failed to save show_unicode_description: {e}");
                 }
                 Task::none()
             }
@@ -1168,6 +1187,21 @@ impl App {
             )
             .width(Length::Fill)
             .into(),
+            settings_slider(
+                "Items per page",
+                if self.items_per_page == 0 {
+                    "All".to_string()
+                } else {
+                    self.items_per_page.to_string()
+                },
+                slider(0.0..=30.0, self.items_per_page as f32, Message::SetItemsPerPage).into(),
+            ),
+            text("Split long pickers into pages; All shows every choice in one row.")
+                .size(11)
+                .into(),
+            checkbox("Show Unicode name below the picker", self.show_unicode_description)
+                .on_toggle(Message::SetShowUnicodeDescription)
+                .into(),
         ])
         .spacing(8)
         .into();

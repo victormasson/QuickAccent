@@ -167,7 +167,7 @@ elif [[ -n "${ROOT:-}" && -f "$ROOT/dist/linux/quickaccent.desktop" ]]; then
   DESKTOP_SRC="$ROOT/dist/linux/quickaccent.desktop"
 fi
 if [[ -n "$DESKTOP_SRC" ]]; then
-  sed "s|^Exec=.*|Exec=$BIN_DIR/quickaccent|" "$DESKTOP_SRC" > "$APP_DIR/quickaccent.desktop"
+  sed "s|^Exec=quickaccent|Exec=$BIN_DIR/quickaccent|" "$DESKTOP_SRC" > "$APP_DIR/quickaccent.desktop"
   if [[ -n "$ICON_INSTALLED" ]]; then
     sed -i "s|^Icon=.*|Icon=$ICON_INSTALLED|" "$APP_DIR/quickaccent.desktop"
   fi

@@ -269,7 +269,11 @@ fn acquire_single_instance_lock() -> bool {
             .unwrap_or_default()
             .trim()
             .to_string();
-        let running_as_service = std::env::var_os("INVOCATION_ID").is_some();
+        // SYSTEMD_EXEC_PID names the process systemd itself started. Apps a
+        // systemd-run compositor (uwsm Hyprland) launches inherit its
+        // INVOCATION_ID, so that alone made every launcher click take over.
+        let running_as_service = std::env::var("SYSTEMD_EXEC_PID")
+            .is_ok_and(|pid| pid == std::process::id().to_string());
         if running_as_service && attempts < 10 {
             if attempts == 0 {
                 eprintln!(
