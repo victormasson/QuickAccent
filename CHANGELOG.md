@@ -15,6 +15,13 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Keyboards reconnected or woken from suspend stayed ungrabbed (Linux).**
+  A new `/dev/input` node is created `root:root 0600` and only then handed
+  to group `input` by udev; the grab tried to open it on creation, lost that
+  race and never retried, so a power-cycled or Bluetooth keyboard typed
+  plain letters until QuickAccent was restarted. Nodes are now retried when
+  udev changes their permissions, and the clone of a keyboard that goes
+  away is destroyed instead of lingering as a ghost device.
 - **Some accents never appeared in Chromium apps (Brave, VS Code, Teams…).**
   Characters beyond the F13–F23 slots were parked on evdev codes KEY_HP,
   KEY_QUESTION and KEY_ALTERASE, which Chromium's key table does not know,

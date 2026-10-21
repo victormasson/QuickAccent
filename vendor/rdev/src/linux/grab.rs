@@ -7,12 +7,13 @@ use evdev_rs::{
     Device, InputEvent, UInputDevice,
 };
 use inotify::{Inotify, WatchMask};
+use std::collections::HashSet;
 use std::ffi::{OsStr, OsString};
 use std::fs::{read_dir, File};
 use std::io;
 use std::os::unix::{
     ffi::OsStrExt,
-    fs::FileTypeExt,
+    fs::{FileTypeExt, MetadataExt},
     io::{AsRawFd, IntoRawFd, RawFd},
 };
 use std::path::Path;
@@ -352,7 +353,14 @@ pub fn filter_map_events<F>(mut func: F) -> io::Result<()>
 where
     F: FnMut(InputEvent) -> (Option<InputEvent>, GrabStatus),
 {
-    let (epoll_fd, mut devices, mut output_devices) = setup_devices()?;
+    let (epoll_fd, mut devices, output_devices, mut inodes) = setup_devices()?;
+    // QuickAccent patch: a clone is dropped (destroying its uinput device)
+    // when the keyboard it mirrors goes away, so reconnects leave no ghosts.
+    let mut output_devices: Vec<Option<UInputDevice>> =
+        output_devices.into_iter().map(Some).collect();
+    // Nodes grabbed and still alive, by inode: a re-created node is a new
+    // inode even when it reuses the eventN name.
+    let mut grabbed: HashSet<u64> = inodes.iter().copied().collect();
     let mut inotify = setup_inotify(epoll_fd, &devices)?;
 
     //grab devices
@@ -378,16 +386,14 @@ where
             // new device file created
             if event.data == INOTIFY_DATA {
                 for event in inotify.read_events(&mut inotify_buffer)? {
-                    assert!(
-                        event.mask.contains(inotify::EventMask::CREATE),
-                        "inotify is listening for events other than file creation"
-                    );
                     // QuickAccent patch: non-fatal + grabs hot-plugged devices
                     add_device_to_epoll_from_inotify_event(
                         epoll_fd,
                         event,
                         &mut devices,
                         &mut output_devices,
+                        &mut inodes,
+                        &mut grabbed,
                     );
                 }
             } else {
@@ -405,16 +411,24 @@ where
                         {
                             continue 'events;
                         }
-                        Err(_) => {
+                        Err(e) => {
+                            // Unplugged / powered off / lost across suspend.
+                            eprintln!(
+                                "[rdev] keyboard gone: {} ({e})",
+                                device.name().unwrap_or("?")
+                            );
                             let device_fd = device.fd().unwrap().into_raw_fd();
                             let empty_event = epoll::Event::new(epoll::Events::empty(), 0);
                             epoll::ctl(epoll_fd, EPOLL_CTL_DEL, device_fd, empty_event)?;
+                            grabbed.remove(&inodes[device_idx]);
+                            output_devices[device_idx] = None;
                             continue 'events;
                         }
                     };
                     let (event, grab_status) = func(event);
 
-                    if let (Some(event), Some(out_device)) = (event, output_devices.get(device_idx))
+                    if let (Some(event), Some(Some(out_device))) =
+                        (event, output_devices.get(device_idx))
                     {
                         out_device.write_event(&event)?;
                     }
@@ -500,7 +514,11 @@ where
 
 fn inotify_devices() -> io::Result<Inotify> {
     let mut inotify = Inotify::init()?;
-    inotify.add_watch(DEV_PATH, WatchMask::CREATE)?;
+    // QuickAccent patch: devtmpfs creates a node root:root 0600 and udev only
+    // then hands it to group `input` — opening on CREATE alone loses that
+    // race and the reconnected keyboard was never grabbed. ATTRIB fires on
+    // udev's chown/chmod, so a node that wasn't openable yet is retried.
+    inotify.add_watch(DEV_PATH, WatchMask::CREATE | WatchMask::ATTRIB)?;
     Ok(inotify)
 }
 
@@ -538,9 +556,14 @@ fn add_device_to_epoll_from_inotify_event(
     epoll_fd: RawFd,
     event: inotify::Event<&OsStr>,
     devices: &mut Vec<Device>,
-    output_devices: &mut Vec<UInputDevice>,
+    output_devices: &mut Vec<Option<UInputDevice>>,
+    inodes: &mut Vec<u64>,
+    grabbed: &mut HashSet<u64>,
 ) {
     let Some(name) = event.name else { return };
+    if !name.as_bytes().starts_with(b"event") {
+        return;
+    }
     // Same filter as get_device_files: mouse*/mice/js* nodes don't play nice
     // with libevdev.
     let name_bytes = name.as_bytes();
@@ -554,6 +577,13 @@ fn add_device_to_epoll_from_inotify_event(
     device_path.push(OsString::from("/"));
     device_path.push(name);
     // new plug events
+    let Ok(inode) = std::fs::metadata(&device_path).map(|m| m.ino()) else {
+        return;
+    };
+    if grabbed.contains(&inode) {
+        return; // already ours: ATTRIB from an ACL / seat change
+    }
+    // Not openable yet (udev still relabeling): its ATTRIB event retries.
     let Ok(file) = File::open(&device_path) else {
         return;
     };
@@ -570,10 +600,17 @@ fn add_device_to_epoll_from_inotify_event(
     if device.grab(evdev_rs::GrabMode::Grab).is_err() {
         return;
     }
-    // devices and output_devices must stay parallel (indexed by epoll data).
+    eprintln!(
+        "[rdev] grabbed {} ({})",
+        device.name().unwrap_or("?"),
+        device_path.to_string_lossy()
+    );
+    // devices, output_devices and inodes stay parallel (indexed by epoll data).
     let event = epoll::Event::new(EPOLLIN, devices.len() as u64);
     devices.push(device);
-    output_devices.push(out_device);
+    output_devices.push(Some(out_device));
+    inodes.push(inode);
+    grabbed.insert(inode);
     let _ = epoll::ctl(epoll_fd, EPOLL_CTL_ADD, fd, event);
 }
 
@@ -613,20 +650,23 @@ fn is_keyboard_device(device: &Device) -> bool {
 /// uinputdevices is the same length as devices, and each uinput device is
 /// a libevdev copy of its corresponding device.The epoll_fd is level-triggered
 /// on any available data in the original devices.
-fn setup_devices() -> io::Result<(RawFd, Vec<Device>, Vec<UInputDevice>)> {
+fn setup_devices() -> io::Result<(RawFd, Vec<Device>, Vec<UInputDevice>, Vec<u64>)> {
     let device_files = get_device_files(DEV_PATH)?;
     // QuickAccent patch: build the libevdev handle first so non-keyboards can
     // be dropped (closing their fd) before anything is grabbed or watched.
     let mut fds = Vec::new();
     let mut devices = Vec::new();
+    let mut inodes = Vec::new();
     for file in device_files {
         let fd = file.as_raw_fd();
+        let inode = file.metadata()?.ino();
         let device = Device::new_from_fd(file)?;
         if !is_keyboard_device(&device) {
             continue;
         }
         fds.push(fd);
         devices.push(device);
+        inodes.push(inode);
     }
     let epoll_fd = epoll::create(true)?;
     for (file_idx, fd) in fds.iter().enumerate() {
@@ -637,7 +677,7 @@ fn setup_devices() -> io::Result<(RawFd, Vec<Device>, Vec<UInputDevice>)> {
         .iter()
         .map(UInputDevice::create_from_device)
         .collect::<io::Result<Vec<UInputDevice>>>()?;
-    Ok((epoll_fd, devices, output_devices))
+    Ok((epoll_fd, devices, output_devices, inodes))
 }
 
 /// Creates an inotify instance looking at /dev/input and adds it to an epoll instance.
