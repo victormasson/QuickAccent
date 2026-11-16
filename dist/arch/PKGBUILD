@@ -17,7 +17,7 @@ conflicts=("$_pkgname")
 install="$_pkgname.install"
 source=("$_pkgname-$pkgver.tar.gz::$url/releases/download/v$pkgver/quickaccent-linux-x86_64.tar.gz")
 # Refresh after tagging: `updpkgsums` (pacman-contrib). Must match SHA256SUMS on the release.
-sha256sums=('UPDATE-WITH-updpkgsums-AFTER-TAGGING')
+sha256sums=('92517cd29f0f6160748ea43802c8310688d0332ef1493eb8d3c63f063eeb6cde')
 
 package() {
   cd "$srcdir/quickaccent-linux-x86_64"
