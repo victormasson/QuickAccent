@@ -5,6 +5,8 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-11-16
+
 ### Added
 
 - **Grid view.** Down Arrow in the picker shows every choice for the letter
@@ -12,6 +14,14 @@ This project adheres to [Semantic Versioning](https://semver.org/).
   the arrow keys move in all four directions.
 - **Settings:** *Items per page* and *Show Unicode name below the picker*,
   applied to the next picker without a restart.
+- **Character descriptions.** The picker shows the selected character's code
+  point and Unicode 17.0 name below the choices (`show_unicode_description`,
+  on by default).
+- **Picker pages.** `items_per_page` splits long choice lists into pages
+  (`0`, the default, shows them all).
+- **Cherokee, Osage and Canadian syllabics** script sets, with their full
+  Unicode 17.0 repertoires reached through Latin keys.
+  Thanks to escidmore for these three (#14, #15, #16).
 
 ### Fixed
 
